@@ -22,9 +22,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
+use reqwest::StatusCode;
 use reqwest::blocking::Client;
 use reqwest::header::{CONTENT_LENGTH, ETAG, RANGE};
-use reqwest::StatusCode;
 use sha2::{Digest, Sha256};
 
 use crate::error::{HardwareError, Result};
@@ -51,9 +51,9 @@ pub fn pull(
     let url = model.hf_url();
     let client = build_client()?;
     let meta = head_metadata(&client, &url)?;
-    let total = meta.size_bytes.ok_or_else(|| HardwareError::DownloadSizeUnknown {
-        url: url.clone(),
-    })?;
+    let total = meta
+        .size_bytes
+        .ok_or_else(|| HardwareError::DownloadSizeUnknown { url: url.clone() })?;
 
     let final_path = dest_dir.join(&model.filename);
     if file_len(&final_path) == Some(total) {
@@ -172,8 +172,7 @@ fn parse_sha256_etag(value: &str) -> Option<String> {
         .trim_start_matches("W/")
         .trim_matches('"')
         .to_ascii_lowercase();
-    (candidate.len() == 64 && candidate.bytes().all(|b| b.is_ascii_hexdigit()))
-        .then_some(candidate)
+    (candidate.len() == 64 && candidate.bytes().all(|b| b.is_ascii_hexdigit())).then_some(candidate)
 }
 
 /// Flux séquentiel avec reprise : `Range: bytes=<déjà présent>-` quand le
@@ -208,12 +207,14 @@ fn download_sequential(
             .send()
             .map_err(|source| http_err(url, source))?;
         if response.status() == StatusCode::PARTIAL_CONTENT {
-            file.seek(SeekFrom::End(0)).map_err(|source| io_err(part_path, source))?;
+            file.seek(SeekFrom::End(0))
+                .map_err(|source| io_err(part_path, source))?;
             progress.add(have);
             response
         } else {
             // Serveur sans Range : repartir de zéro.
-            file.set_len(0).map_err(|source| io_err(part_path, source))?;
+            file.set_len(0)
+                .map_err(|source| io_err(part_path, source))?;
             file.seek(SeekFrom::Start(0))
                 .map_err(|source| io_err(part_path, source))?;
             client
@@ -278,11 +279,12 @@ fn download_parallel(
         let part_path = part_path.to_owned();
         let progress = progress.clone();
         handles.push(thread::spawn(move || {
-            fetch_segment(&client, &url, &part_path, start, end, progress)
-                .map_err(|error| HardwareError::DownloadSegment {
+            fetch_segment(&client, &url, &part_path, start, end, progress).map_err(|error| {
+                HardwareError::DownloadSegment {
                     segment,
                     reason: error.to_string(),
-                })
+                }
+            })
         }));
     }
 
@@ -334,8 +336,7 @@ fn fetch_segment(
         inner: io::BufReader::with_capacity(IO_BUF_BYTES, response),
         progress,
     };
-    io::copy(&mut counted, &mut file)
-        .map_err(|source| io_err(part_path, source))?;
+    io::copy(&mut counted, &mut file).map_err(|source| io_err(part_path, source))?;
     file.flush().map_err(|source| io_err(part_path, source))
 }
 
@@ -413,10 +414,7 @@ mod tests {
     #[test]
     fn etag_parsing_accepts_only_sha256_hex() {
         let sha = "a".repeat(64);
-        assert_eq!(
-            parse_sha256_etag(&format!("\"{sha}\"")),
-            Some(sha.clone())
-        );
+        assert_eq!(parse_sha256_etag(&format!("\"{sha}\"")), Some(sha.clone()));
         assert_eq!(
             parse_sha256_etag(&format!("W/\"{sha}\"")),
             Some(sha.clone())
@@ -432,7 +430,12 @@ mod tests {
 
     #[test]
     fn segments_cover_file_exactly() {
-        for total in [SEGMENT_MIN_BYTES, PARALLEL_MIN_BYTES, 1 << 30, (1 << 30) + 1] {
+        for total in [
+            SEGMENT_MIN_BYTES,
+            PARALLEL_MIN_BYTES,
+            1 << 30,
+            (1 << 30) + 1,
+        ] {
             let ranges = plan_segments(total, MAX_PARALLEL_WORKERS);
             assert_eq!(ranges.first().map(|r| r.0), Some(0));
             assert_eq!(ranges.last().map(|r| r.1), Some(total));

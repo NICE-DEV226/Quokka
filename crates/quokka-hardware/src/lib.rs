@@ -37,7 +37,7 @@ pub mod profile;
 pub mod registry;
 
 pub use error::{HardwareError, Result};
-pub use memory::MIB;
 pub use gpu::GpuBackend;
+pub use memory::MIB;
 pub use profile::{HardwareProfile, Tier};
 pub use registry::{ModelPair, ModelRef, ModelRegistry, ModelSpec, Placement};

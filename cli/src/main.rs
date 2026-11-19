@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
 use quokka_hardware::registry::ModelSpec;
-use quokka_hardware::{discovery, download, registry, GpuBackend, HardwareProfile, Tier};
+use quokka_hardware::{GpuBackend, HardwareProfile, Tier, discovery, download, registry};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -93,7 +93,10 @@ fn print_hardware(json: bool) -> Result<()> {
             name,
             vram_mb,
             device_count,
-        } => format!("CUDA — {name} ({} VRAM · {device_count} device(s))", fmt_mib(*vram_mb)),
+        } => format!(
+            "CUDA — {name} ({} VRAM · {device_count} device(s))",
+            fmt_mib(*vram_mb)
+        ),
         GpuBackend::Metal { unified_ram_mb } => {
             format!("Metal — unified memory ({})", fmt_mib(*unified_ram_mb))
         }
@@ -101,7 +104,10 @@ fn print_hardware(json: bool) -> Result<()> {
             name,
             vram_mb,
             device_count,
-        } => format!("Vulkan — {name} ({} VRAM · {device_count} device(s))", fmt_mib(*vram_mb)),
+        } => format!(
+            "Vulkan — {name} ({} VRAM · {device_count} device(s))",
+            fmt_mib(*vram_mb)
+        ),
         GpuBackend::None => "none (CPU-only inference)".to_owned(),
     };
 
@@ -181,17 +187,13 @@ fn resolve_pull_targets(target: &str) -> Result<Vec<ModelSpec>> {
     match normalized.as_str() {
         "auto" => {
             let profile = HardwareProfile::probe().context("hardware probe failed")?;
-            let pair = profile
-                .recommended_pair()
-                .context("model registry")?;
+            let pair = profile.recommended_pair().context("model registry")?;
             println!("auto → tier {}", profile.classify_tier());
             Ok(vec![pair.flash, pair.expert])
         }
         "flash" | "expert" => {
             let profile = HardwareProfile::probe().context("hardware probe failed")?;
-            let pair = profile
-                .recommended_pair()
-                .context("model registry")?;
+            let pair = profile.recommended_pair().context("model registry")?;
             let spec = if normalized == "flash" {
                 pair.flash
             } else {

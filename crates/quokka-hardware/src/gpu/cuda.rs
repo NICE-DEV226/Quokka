@@ -40,7 +40,10 @@ pub fn detect() -> Option<CudaGpu> {
             continue;
         };
 
-        if best.as_ref().is_none_or(|gpu| memory.total > gpu.vram_bytes) {
+        if best
+            .as_ref()
+            .is_none_or(|gpu| memory.total > gpu.vram_bytes)
+        {
             best = Some(CudaGpu {
                 name,
                 vram_bytes: memory.total,

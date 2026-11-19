@@ -3,8 +3,8 @@
 //! régressions accidentelles (ex. quelqu'un basculant vers
 //! `System::new_all()`, qui scanne aussi processus et disques).
 
-use criterion::{criterion_group, criterion_main, Criterion};
-use quokka_hardware::{memory, registry, GpuBackend, HardwareProfile};
+use criterion::{Criterion, criterion_group, criterion_main};
+use quokka_hardware::{GpuBackend, HardwareProfile, memory, registry};
 
 fn bench_probe(c: &mut Criterion) {
     c.bench_function("hardware/memory_refresh", |b| {

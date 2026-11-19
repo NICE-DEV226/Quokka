@@ -191,7 +191,10 @@ mod tests {
         let blobs = dir.path().join("blobs");
         std::fs::create_dir_all(&blobs).expect("mkdir blobs");
 
-        write_fake_gguf(&blobs.join("sha256-expert"), MIN_GGUF_BYTES + 5 * 1024 * 1024);
+        write_fake_gguf(
+            &blobs.join("sha256-expert"),
+            MIN_GGUF_BYTES + 5 * 1024 * 1024,
+        );
         write_fake_gguf(&blobs.join("sha256-flash"), MIN_GGUF_BYTES + 1);
 
         // Un gros fichier non-GGUF doit être ignoré…

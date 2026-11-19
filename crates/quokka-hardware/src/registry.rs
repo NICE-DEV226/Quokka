@@ -13,8 +13,10 @@ use crate::error::{HardwareError, Result};
 use crate::profile::Tier;
 
 /// Registre livré dans le dépôt, compilé dans le binaire.
-pub const EMBEDDED_REGISTRY: &str =
-    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../registry/profiles.json"));
+pub const EMBEDDED_REGISTRY: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../registry/profiles.json"
+));
 
 /// Où les poids doivent résider une fois chargés (pilote `n_gpu_layers`,
 /// `use_mlock` dans `quokka-core`).
@@ -125,12 +127,11 @@ pub fn load() -> Result<ModelRegistry> {
 pub fn load_from(override_path: Option<&Path>) -> Result<ModelRegistry> {
     match override_path.filter(|path| path.is_file()) {
         Some(path) => {
-            let raw = std::fs::read_to_string(path).map_err(|source| {
-                HardwareError::RegistryIo {
+            let raw =
+                std::fs::read_to_string(path).map_err(|source| HardwareError::RegistryIo {
                     path: path.display().to_string(),
                     source,
-                }
-            })?;
+                })?;
             serde_json::from_str(&raw).map_err(|source| HardwareError::RegistryParse {
                 path: path.display().to_string(),
                 source,

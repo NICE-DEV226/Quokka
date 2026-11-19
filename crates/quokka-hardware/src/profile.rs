@@ -192,13 +192,25 @@ mod tests {
 
         // Mac 16 Go : la mémoire unifiée ne compte PAS comme VRAM dédiée.
         assert_eq!(
-            profile(15_667, Metal { unified_ram_mb: 15_667 }).classify_tier(),
+            profile(
+                15_667,
+                Metal {
+                    unified_ram_mb: 15_667
+                }
+            )
+            .classify_tier(),
             Tier::Standard
         );
 
         // Mac 32 Go → Workstation via la RAM, pas via l'unifié.
         assert_eq!(
-            profile(31_949, Metal { unified_ram_mb: 31_949 }).classify_tier(),
+            profile(
+                31_949,
+                Metal {
+                    unified_ram_mb: 31_949
+                }
+            )
+            .classify_tier(),
             Tier::Workstation
         );
     }

@@ -9,7 +9,7 @@
 //! rapporter comme VRAM dédiée (sinon la matrice de tiers promeut des
 //! laptops à iGPU en Workstation).
 
-use ash::{vk, Entry};
+use ash::{Entry, vk};
 
 /// Meilleur GPU discret trouvé (plus grand heap DEVICE_LOCAL) + nombre.
 #[derive(Debug, Clone)]

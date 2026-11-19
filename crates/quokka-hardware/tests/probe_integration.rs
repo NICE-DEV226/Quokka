@@ -1,7 +1,7 @@
 //! Probes de bout en bout contre l'hôte réel — tolérants à l'environnement
 //! pour que la matrice CI (x86_64 + aarch64, avec ou sans GPU) reste verte.
 
-use quokka_hardware::{discovery, registry, HardwareProfile, Tier};
+use quokka_hardware::{HardwareProfile, Tier, discovery, registry};
 
 #[test]
 fn probe_returns_a_consistent_profile() {
