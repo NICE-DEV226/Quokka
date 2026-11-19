@@ -1,0 +1,71 @@
+[workspace]
+resolver = "2"
+members = [
+    "benches",
+    "cli",
+    "crates/*",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+# --- Crates internes --------------------------------------------------------
+quokka-hardware = { path = "crates/quokka-hardware", version = "0.1.0" }
+
+# --- Erreurs & observabilité ------------------------------------------------
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# --- Sérialisation ----------------------------------------------------------
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# --- Probing matériel -------------------------------------------------------
+sysinfo = "0.33"
+nvml-wrapper = "0.10"
+ash = "0.38"
+walkdir = "2"
+
+# --- Téléchargement de modèles ----------------------------------------------
+reqwest = { version = "0.12", default-features = false, features = [
+    "blocking",
+    "rustls-tls",
+    "stream",
+] }
+sha2 = "0.10"
+
+# --- CLI --------------------------------------------------------------------
+clap = { version = "4", features = ["derive"] }
+indicatif = "0.17"
+
+# --- Dev --------------------------------------------------------------------
+tempfile = "3"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[workspace.lints.clippy]
+# DoD §8.1 — zéro panic en production : pas de `unwrap`, même dans le feu de
+# l'action. Les tests/benches utilisent `expect` avec message.
+unwrap_used = "warn"
+# DoD §8.4 — tout bloc `unsafe` doit porter son commentaire `// SAFETY:`.
+undocumented_unsafe_blocks = "warn"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+# `panic` reste sur `unwind` volontairement : le runtime Tokio/Axum s'appuie
+# sur l'isolation de panique par tâche (JoinError) pour survivre à une
+# requête qui tourne mal ; `abort` tuerait le process entier.
+
+[profile.profiling]
+# Pour perf/flamegraph : release + symboles de lignes.
+inherits = "release"
+debug = "line-tables-only"
+strip = "none"

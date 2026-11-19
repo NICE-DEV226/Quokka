@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "tiers": {
+    "lightweight": {
+      "flash": {
+        "repo_id": "bartowski/Qwen2.5-1.5B-Instruct-GGUF",
+        "filename": "Qwen2.5-1.5B-Instruct-Q4_K_M.gguf",
+        "quantization": "Q4_K_M",
+        "approx_size_mb": 1100,
+        "placement": "ram_pinned"
+      },
+      "expert": {
+        "repo_id": "bartowski/Qwen2.5-Coder-3B-Instruct-GGUF",
+        "filename": "Qwen2.5-Coder-3B-Instruct-Q4_K_M.gguf",
+        "quantization": "Q4_K_M",
+        "approx_size_mb": 2100,
+        "placement": "mmap_on_demand"
+      }
+    },
+    "standard": {
+      "flash": {
+        "repo_id": "bartowski/Llama-3.2-3B-Instruct-GGUF",
+        "filename": "Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+        "quantization": "Q4_K_M",
+        "approx_size_mb": 2000,
+        "placement": "ram_pinned"
+      },
+      "expert": {
+        "repo_id": "bartowski/Qwen2.5-Coder-7B-Instruct-GGUF",
+        "filename": "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf",
+        "quantization": "Q4_K_M",
+        "approx_size_mb": 4700,
+        "placement": "hybrid_offload"
+      }
+    },
+    "workstation": {
+      "flash": {
+        "repo_id": "bartowski/Qwen2.5-3B-Instruct-GGUF",
+        "filename": "Qwen2.5-3B-Instruct-Q8_0.gguf",
+        "quantization": "Q8_0",
+        "approx_size_mb": 3200,
+        "placement": "gpu_full"
+      },
+      "expert": {
+        "repo_id": "bartowski/Qwen2.5-Coder-14B-Instruct-GGUF",
+        "filename": "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf",
+        "quantization": "Q4_K_M",
+        "approx_size_mb": 9000,
+        "placement": "gpu_full",
+        "alternates": [
+          {
+            "repo_id": "bartowski/DeepSeek-R1-Distill-Qwen-14B-GGUF",
+            "filename": "DeepSeek-R1-Distill-Qwen-14B-Q4_K_M.gguf"
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,19 @@
+[package]
+name = "quokka"
+description = "Quokka — smart local AI router & high-performance local inference engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+quokka-hardware = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+indicatif = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[lints]
+workspace = true
