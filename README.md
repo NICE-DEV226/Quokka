@@ -1,67 +1,99 @@
-<div align="center">
-  <img src="brand/mascot.svg" alt="Quokka" width="220" />
+<p align="center">
+  <a href="https://github.com/NICE-DEV226/quokker">
+    <img src="brand/mascot.svg" alt="Quokka" width="200" />
+  </a>
+</p>
 
-  # QUOKKA
+<h1 align="center">Quokka</h1>
 
-  **Routeur IA local et moteur d'inférence haute performance — un seul binaire, zéro configuration.**
+<p align="center">
+  <strong>The hardware-aware AI router for your PC.</strong><br/>
+  One binary. Zero configuration. Your prompts, routed to the right model in &lt; 2&nbsp;ms.
+</p>
 
-  [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
-  [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org)
-</div>
+<p align="center">
+  <a href="https://github.com/NICE-DEV226/quokker/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache-2.0" /></a>
+  <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/rust-1.85%2B-orange.svg" alt="Rust 1.85+" /></a>
+  <a href="https://github.com/NICE-DEV226/quokker/actions"><img src="https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey.svg" alt="Platforms" /></a>
+</p>
 
 ---
 
-## Le problème
+## Why Quokka
 
-Les runners d'inférence locaux (Ollama, LM Studio) vous obligent à choisir vos modèles à la main et saturent la RAM/VRAM de votre PC. Quokka scanne le matériel au démarrage, installe le duo de modèles optimal (*Flash* + *Expert*) et aiguille chaque requête en **< 2 ms** vers le bon modèle — le petit pour le trivial, le gros pour le raisonnement et le code.
+Local inference runners make you pick models by hand and happily eat every gigabyte of RAM you own. Quokka probes your machine at startup, installs the optimal **Flash + Expert** model pair, and routes every request in under **2 milliseconds** — small model for the trivial, big model for reasoning and code.
 
-- **Hardware-aware** : sonde RAM, SIMD (AVX2/AVX-512/NEON) et VRAM (CUDA/Metal/Vulkan), puis calibre la quantization et l'offload GPU (`n_gpu_layers`) tout seul.
-- **Mémoire sobre** : poids en `mmap`, KV-cache évincé vers le disque (LZ4), swap Flash ↔ Expert sans OOM.
-- **Compatible partout** : API OpenAI (`/v1/chat/completions`, SSE, tool calling) et serveur MCP natif.
+- **Hardware-aware** — probes RAM, CPU SIMD (AVX2 / AVX-512 / NEON) and GPU VRAM (CUDA / Metal / Vulkan), then picks quantizations and GPU offload (`n_gpu_layers`) automatically.
+- **Memory-frugal** — `mmap`'d weights, LZ4 KV-cache eviction to disk, instant Flash ↔ Expert swaps with zero OOM risk.
+- **Drop-in compatible** — OpenAI-compatible API (`/v1/chat/completions`, SSE streaming, tool calling) and a native MCP server for Cursor, Claude Code and friends.
 
-## État actuel — Phase 1
+## Quickstart
 
-Le workspace est en place ; le moteur d'inférence arrive en Phase 2. Aujourd'hui le binaire sait **profiler votre machine** et **télécharger les modèles recommandés** :
+> **Status: Phase 1.** The workspace, hardware probe, model registry and Hugging Face downloader are live. The inference engine and router land in Phases 2–3 — see the [roadmap](#roadmap).
 
 ```bash
-# Build depuis les sources (Rust ≥ 1.85)
+# Build from source (Rust ≥ 1.85)
 cargo build --release -p quokka
 
-# 1. Sonde CPU/RAM/SIMD/GPU, affiche le tier et le duo Flash/Expert recommandé
+# 1. Probe CPU / RAM / SIMD / GPU — shows your tier and recommended model pair
 ./target/release/quokka hardware
+./target/release/quokka hardware --json   # machine-readable output
 
-# 2. Télécharge le duo recommandé (ou une cible précise) vers ~/.quokka/models
-./target/release/quokka pull auto        # paire du tier de cette machine
-./target/release/quokka pull flash       # ou : expert, lightweight, standard, workstation
+# 2. Download the recommended pair (or a specific target) into ~/.quokka/models
+./target/release/quokka pull auto         # Flash + Expert for this machine
+./target/release/quokka pull flash        # or: expert, lightweight, standard, workstation
 ```
 
-Sortie JSON disponible : `quokka hardware --json`.
+Models already present in Ollama, LM Studio or the Hugging Face cache are detected and reused — Quokka never downloads a duplicate.
+
+## CLI
+
+| Command | Description |
+| --- | --- |
+| `quokka hardware [--json]` | Probe the host and print the hardware profile, tier and recommended model pair |
+| `quokka pull <target>` | Download GGUF models — `auto`, `flash`, `expert`, or a tier name |
+
+## Documentation
+
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — full engineering specification
+- [`docs/adr/`](docs/adr/) — architecture decision records
+- [`registry/profiles.json`](registry/profiles.json) — hardware tier → GGUF model mapping
 
 ## Roadmap
 
-| Phase | Contenu | Statut |
+| Phase | Scope | Status |
 | --- | --- | --- |
-| 1 | Probe matériel, registre de tiers, découverte GGUF, downloader HF | ✅ fait |
-| 2 | `quokka-core` (`llama.cpp` FFI, `mmap`), API OpenAI SSE | 🚧 en cours |
-| 3 | Routeur < 2 ms, KV-cache LZ4, `MemoryPressureFallback` | à venir |
-| 4 | Serveur MCP, Web UI embarquée, releases multi-plateformes | à venir |
+| 1 | Hardware probe, tier registry, GGUF discovery, HF downloader | ✅ Done |
+| 2 | `quokka-core` — `llama.cpp` FFI, `mmap` loading, OpenAI SSE API | 🚧 In progress |
+| 3 | Sub-2ms router, LZ4 KV-cache, `MemoryPressureFallback` | Planned |
+| 4 | MCP server, embedded Web UI, cross-compiled releases | Planned |
 
-## Architecture
-
-Voir [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) pour la spécification complète et [`docs/adr/`](docs/adr/) pour les décisions structurantes.
+## Repository layout
 
 ```
 crates/
-  quokka-hardware/   probe matériel, auto-tuner, registre, downloader HF, découverte GGUF
-  quokka-core/       (Phase 2) FFI llama.cpp, mmap, KV-cache
-  quokka-router/     (Phase 3) classifieur < 2 ms
-  quokka-server/     (Phase 4) API OpenAI, MCP, Web UI
-  quokka-telemetry/  (Phase 4) métriques
-cli/                 binaire `quokka` (clap)
-registry/            profiles.json — mapping matériel → GGUF
-benches/             benchmarks criterion
+  quokka-hardware/   hardware probe, auto-tuner, registry, HF downloader, GGUF discovery
+  quokka-core/       (Phase 2) llama.cpp FFI, mmap, KV-cache
+  quokka-router/     (Phase 3) < 2ms intent classifier
+  quokka-server/     (Phase 4) OpenAI API, MCP, embedded Web UI
+  quokka-telemetry/  (Phase 4) metrics
+cli/                 `quokka` binary (clap)
+registry/            profiles.json — hardware → GGUF mapping
+benches/             criterion benchmarks
+brand/               mascot & brand assets
+docs/                ARCHITECTURE.md + ADRs
 ```
 
-## Licence
+## Contributing
 
-Apache-2.0 — voir [`LICENSE`](LICENSE).
+Issues and pull requests are welcome. The engineering bar is defined in [`docs/ARCHITECTURE.md` §8](docs/ARCHITECTURE.md): zero panics in production, `clippy -D warnings` clean, router latency strictly under 2 ms.
+
+```bash
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo bench -p quokka-benches
+```
+
+## License
+
+[Apache-2.0](LICENSE)
