@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://github.com/NICE-DEV226/quokker">
+  <a href="https://github.com/NICE-DEV226/quokka">
     <img src="brand/mascot.svg" alt="Quokka" width="200" />
   </a>
 </p>
@@ -12,10 +12,10 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/NICE-DEV226/quokker/actions/workflows/ci.yml"><img src="https://github.com/NICE-DEV226/quokker/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <a href="https://github.com/NICE-DEV226/quokker/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache-2.0" /></a>
+  <a href="https://github.com/NICE-DEV226/quokka/actions/workflows/ci.yml"><img src="https://github.com/NICE-DEV226/quokka/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/NICE-DEV226/quokka/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache-2.0" /></a>
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/rust-1.85%2B-orange.svg" alt="Rust 1.85+" /></a>
-  <a href="https://github.com/NICE-DEV226/quokker/actions"><img src="https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey.svg" alt="Platforms" /></a>
+  <a href="https://github.com/NICE-DEV226/quokka/actions"><img src="https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey.svg" alt="Platforms" /></a>
 </p>
 
 ---
