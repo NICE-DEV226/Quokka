@@ -1,0 +1,17 @@
+[package]
+name = "quokka-core"
+description = "Inference engine: llama.cpp FFI, mmap model loading, KV-cache orchestration"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+llama-cpp-2 = { workspace = true }
+quokka-hardware = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[lints]
+workspace = true
