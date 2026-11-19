@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://github.com/NICE-DEV226/quokker">
-    <img src="brand/mascot.svg" alt="Quokka" width="200" style="background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%); border-radius: 24px; padding: 20px;" />
+    <img src="brand/mascot.svg" alt="Quokka" width="200" />
   </a>
 </p>
 
