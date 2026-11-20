@@ -279,7 +279,11 @@ impl<'a> InferenceSession<'a> {
 
     fn tokenize_prompt(&self, prompt: &str) -> Vec<LlamaToken> {
         let vocab = self.model.vocab();
-        vocab.tokenize(prompt.as_bytes(), vocab.should_add_bos(), false)
+        // `parse_special = true` est obligatoire : le chat template produit
+        // des marqueurs `<|start_header_id|>`… qui doivent devenir de
+        // vrais tokens spéciaux, pas du texte littéral (sinon le modèle
+        // "répond" en régénérant le template — observé en e2e).
+        vocab.tokenize(prompt.as_bytes(), vocab.should_add_bos(), true)
     }
 
     /// Décode le prompt par chunks de `n_batch`, positions absolues.
