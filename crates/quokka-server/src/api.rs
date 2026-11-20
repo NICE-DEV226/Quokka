@@ -113,11 +113,20 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
-/// Démarre le serveur HTTP jusqu'à arrêt du process.
+/// Démarre le serveur HTTP jusqu'à Ctrl-C (arrêt gracieux des
+/// connexions SSE en vol).
 pub async fn serve(state: AppState, addr: SocketAddr) -> std::io::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(%addr, "quokka server listening");
-    axum::serve(listener, router(state)).await
+    axum::serve(listener, router(state))
+        .with_graceful_shutdown(async {
+            if let Err(err) = tokio::signal::ctrl_c().await {
+                tracing::warn!(%err, "ctrl-c handler unavailable");
+            } else {
+                tracing::info!("shutdown signal received");
+            }
+        })
+        .await
 }
 
 async fn health() -> Json<serde_json::Value> {
