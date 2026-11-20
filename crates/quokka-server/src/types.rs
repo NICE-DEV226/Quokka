@@ -203,6 +203,17 @@ pub struct Usage {
     pub completion_tokens: usize,
     /// Total.
     pub total_tokens: usize,
+    /// Détail OpenAI : tokens du prompt servis par le KV-cache
+    /// (préfixe réutilisé entre requêtes).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_tokens_details: Option<PromptTokensDetails>,
+}
+
+/// Détail `prompt_tokens` (sous-ensemble de la spec OpenAI).
+#[derive(Debug, Serialize)]
+pub struct PromptTokensDetails {
+    /// Tokens du prompt dont le KV-cache a été réutilisé.
+    pub cached_tokens: usize,
 }
 
 /// Mappe `FinishReason` vers le vocabulaire OpenAI.

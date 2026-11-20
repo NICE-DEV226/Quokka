@@ -219,6 +219,7 @@ async fn json_response(
     let mut text = String::new();
     let mut finish = FinishReason::Length;
     let mut prompt_tokens = 0_usize;
+    let mut cached_prompt_tokens = 0_usize;
     let mut generated_tokens = 0_usize;
 
     while let Some(event) = events_rx.recv().await {
@@ -227,11 +228,13 @@ async fn json_response(
             EngineEvent::Done {
                 finish: f,
                 prompt_tokens: p,
+                cached_prompt_tokens: c,
                 generated_tokens: g,
                 ..
             } => {
                 finish = f;
                 prompt_tokens = p;
+                cached_prompt_tokens = c;
                 generated_tokens = g;
             }
             EngineEvent::Error(message) => {
@@ -257,6 +260,11 @@ async fn json_response(
             prompt_tokens,
             completion_tokens: generated_tokens,
             total_tokens: prompt_tokens + generated_tokens,
+            prompt_tokens_details: (cached_prompt_tokens > 0).then_some(
+                crate::types::PromptTokensDetails {
+                    cached_tokens: cached_prompt_tokens,
+                },
+            ),
         },
     })
     .into_response()

@@ -110,6 +110,9 @@ pub struct ChatResult {
     pub text: String,
     /// Tokens du prompt encodé.
     pub prompt_tokens: usize,
+    /// Tokens du prompt dont le KV-cache a été réutilisé (préfixe commun
+    /// avec la requête précédente sur ce contexte).
+    pub cached_prompt_tokens: usize,
     /// Tokens générés.
     pub generated_tokens: usize,
     /// Raison d'arrêt.
@@ -119,12 +122,20 @@ pub struct ChatResult {
 }
 
 /// Session d'inférence sur un modèle du pool.
+///
+/// Le contexte est **persistant** : le KV-cache survit entre les appels
+/// [`chat`](Self::chat) et la séquence de tokens précédente est conservée
+/// pour réutiliser le préfixe commun (comme le prompt cache d'llama-server).
+/// Une session = un thread à la fois (contexte non `Sync`).
 pub struct InferenceSession<'a> {
     model: &'a LlamaModel,
     ctx: LlamaContext<'a>,
     template: LlamaChatTemplate,
     n_ctx: u32,
     n_batch: u32,
+    /// Séquence complète (prompt + tokens générés) de la dernière requête
+    /// successfully décodée dans ce contexte — base du préfixe commun.
+    prev_tokens: Vec<LlamaToken>,
 }
 
 impl ModelPool {
@@ -193,7 +204,15 @@ impl<'a> InferenceSession<'a> {
             template,
             n_ctx,
             n_batch: config.n_batch.max(1),
+            prev_tokens: Vec::new(),
         })
+    }
+
+    /// Vide le KV-cache et la mémoire de préfixe — à appeler après une
+    /// erreur de décodage pour repartir d'un état sain.
+    pub fn reset_kv(&mut self) {
+        self.ctx.clear_kv_cache();
+        self.prev_tokens.clear();
     }
 
     /// Génère une réponse chat. `emit` reçoit chaque pièce de texte UTF-8
@@ -209,7 +228,21 @@ impl<'a> InferenceSession<'a> {
         let tokens = self.tokenize_prompt(&prompt);
         let prompt_tokens = tokens.len();
 
-        self.decode_prompt(&tokens)?;
+        if prompt_tokens as u32 > self.n_ctx {
+            return Err(CoreError::Inference(format!(
+                "prompt ({prompt_tokens} tokens) exceeds context window ({})",
+                self.n_ctx
+            )));
+        }
+
+        // Préfixe commun avec la séquence précédente : on ne garde dans le
+        // KV-cache que `keep` tokens et on ne décode que le suffixe.
+        // `keep` est borné à prompt_tokens-1 pour garantir au moins un
+        // token fraîchement décodé → logits frais pour le premier sample.
+        let keep = common_prefix_len(&self.prev_tokens, &tokens)
+            .min(prompt_tokens.saturating_sub(1));
+        self.truncate_kv(keep as u32)?;
+        self.decode_prompt(&tokens[keep..], keep as i32)?;
 
         let mut sampler = self.build_sampler(config);
         let mut batch = LlamaBatch::new(self.n_batch as usize, 1);
@@ -218,6 +251,7 @@ impl<'a> InferenceSession<'a> {
         let mut pos = prompt_tokens as i32;
         let mut generated = 0_u32;
         let mut finish = FinishReason::Length;
+        let mut generated_ids = Vec::with_capacity(config.max_tokens as usize);
 
         let mut emit_piece = |piece: &str| {
             text.push_str(piece);
@@ -242,6 +276,7 @@ impl<'a> InferenceSession<'a> {
             let piece = self.model.vocab().token_to_piece(token, false, None);
             out.push(&piece, &mut emit_piece);
             generated += 1;
+            generated_ids.push(token);
 
             batch.clear();
             batch
@@ -254,13 +289,30 @@ impl<'a> InferenceSession<'a> {
 
         out.finish(&mut emit_piece);
 
+        // Mémoire de préfixe pour la prochaine requête : prompt complet +
+        // tokens générés (l'EOG n'est jamais décodé dans le KV, on
+        // l'exclut donc aussi ici).
+        self.prev_tokens.clear();
+        self.prev_tokens.extend_from_slice(&tokens);
+        self.prev_tokens.extend_from_slice(&generated_ids);
+
         Ok(ChatResult {
             text,
             prompt_tokens,
+            cached_prompt_tokens: keep,
             generated_tokens: generated as usize,
             finish,
             elapsed: started.elapsed(),
         })
+    }
+
+    /// Supprime du KV-cache toutes les cellules à partir de la position
+    /// `keep` (séquence 0). `keep = 0` repart de zéro.
+    fn truncate_kv(&mut self, keep: u32) -> Result<()> {
+        self.ctx
+            .kv_cache_seq_rm(0, Some(keep), None)
+            .map_err(|err| CoreError::Inference(format!("kv truncate: {err}")))?;
+        Ok(())
     }
 
     /// Prompt complet via le chat template GGUF (`add_ass = true` ajoute
@@ -293,22 +345,21 @@ impl<'a> InferenceSession<'a> {
         vocab.tokenize(prompt.as_bytes(), vocab.should_add_bos(), true)
     }
 
-    /// Décode le prompt par chunks de `n_batch`, positions absolues.
-    /// Seul le **dernier** token du prompt porte `logits = true`.
-    fn decode_prompt(&mut self, tokens: &[LlamaToken]) -> Result<()> {
+    /// Décode `tokens` (sous-séquence du prompt) en partant de la position
+    /// absolue `start_pos`, par chunks de `n_batch`. Seul le **dernier**
+    /// token du prompt porte `logits = true`.
+    fn decode_prompt(&mut self, tokens: &[LlamaToken], start_pos: i32) -> Result<()> {
         let mut batch = LlamaBatch::new(self.n_batch as usize, 1);
-        let mut pos = 0_i32;
-        let last_global = tokens.len() as i32 - 1;
-        for chunk in tokens.chunks(self.n_batch as usize) {
+        let last_global = start_pos + tokens.len() as i32 - 1;
+        for (offset, chunk) in tokens.chunks(self.n_batch as usize).enumerate() {
             batch.clear();
             for (i, &token) in chunk.iter().enumerate() {
-                let global = pos + i as i32;
+                let global = start_pos + (offset * self.n_batch as usize + i) as i32;
                 batch
                     .add(token, global, &[0], global == last_global)
                     .map_err(|err| CoreError::Inference(format!("prompt batch: {err}")))?;
             }
             self.decode(&mut batch)?;
-            pos += chunk.len() as i32;
         }
         Ok(())
     }
@@ -380,6 +431,11 @@ impl Utf8PieceBuffer {
         emit(&rest);
         self.pending.clear();
     }
+}
+
+/// Longueur du plus long préfixe commun entre deux séquences de tokens.
+fn common_prefix_len(a: &[LlamaToken], b: &[LlamaToken]) -> usize {
+    a.iter().zip(b.iter()).take_while(|(x, y)| x == y).count()
 }
 
 /// Longueur du plus long préfixe UTF-8 valide de `bytes`.

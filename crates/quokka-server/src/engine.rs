@@ -7,11 +7,10 @@
 //! `tokio::sync::mpsc` émetteur glissé dans le job — `blocking_send`
 //! fonctionne depuis un thread non-async.
 //!
-//! Une **session est recréée par requête** : réutiliser un contexte avec
-//! un prompt plus court laisserait des cellules KV stale aux positions
-//! intermédiaires, que llama.cpp prendrait en compte à la génération
-//! suivante. Le coût d'allocation du KV-cache est assumé en v0.1 ;
-//! le cache de sessions (LRU + sérialisation) est un chantier Phase 3.
+//! Une **session persistante par worker** : le `LlamaContext` (et son
+//! KV-cache) survit entre les requêtes et le préfixe de tokens commun est
+//! réutilisé — les tours suivants d'une conversation ne re-paient que le
+//! delta de prompt au lieu de tout le contexte.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -34,6 +33,7 @@ pub enum EngineEvent {
     Done {
         finish: FinishReason,
         prompt_tokens: usize,
+        cached_prompt_tokens: usize,
         generated_tokens: usize,
         elapsed: Duration,
     },
@@ -123,7 +123,9 @@ pub enum EngineError {
     WorkerGone(ModelRole),
 }
 
-/// Boucle du worker : une session par job, events streamés.
+/// Boucle du worker : une session persistante, jobs exécutés en série.
+/// La session est créée une fois et réutilisée — le KV-cache garde le
+/// préfixe de la requête précédente pour éviter le re-prefill complet.
 fn worker_loop(
     pool: Arc<ModelPool>,
     role: ModelRole,
@@ -131,25 +133,45 @@ fn worker_loop(
     rx: std_mpsc::Receiver<Job>,
 ) {
     tracing::info!(role = ?role, "inference worker started");
+    let mut session = match pool.session(role, &session_config) {
+        Ok(session) => Some(session),
+        Err(err) => {
+            tracing::error!(role = ?role, %err, "failed to create inference session");
+            None
+        }
+    };
     while let Ok(job) = rx.recv() {
-        run_job(&pool, role, &session_config, job);
+        run_job(&pool, role, &session_config, &mut session, job);
     }
     tracing::info!(role = ?role, "inference worker stopped");
 }
 
-fn run_job(pool: &ModelPool, role: ModelRole, session_config: &SessionConfig, job: Job) {
+fn run_job<'p>(
+    pool: &'p ModelPool,
+    role: ModelRole,
+    session_config: &SessionConfig,
+    session_slot: &mut Option<quokka_core::session::InferenceSession<'p>>,
+    job: Job,
+) {
     let Job {
         messages,
         config,
         events,
     } = job;
 
-    let mut session = match pool.session(role, session_config) {
-        Ok(session) => session,
-        Err(err) => {
-            let _ = events.blocking_send(EngineEvent::Error(err.to_string()));
-            return;
+    // Session absente (échec à la création initiale) → on retente par job.
+    if session_slot.is_none() {
+        match pool.session(role, session_config) {
+            Ok(session) => *session_slot = Some(session),
+            Err(err) => {
+                let _ = events.blocking_send(EngineEvent::Error(err.to_string()));
+                return;
+            }
         }
+    }
+    let Some(session) = session_slot.as_mut() else {
+        let _ = events.blocking_send(EngineEvent::Error("no inference session".to_owned()));
+        return;
     };
 
     let result = session.chat(&messages, &config, &mut |piece| {
@@ -163,11 +185,15 @@ fn run_job(pool: &ModelPool, role: ModelRole, session_config: &SessionConfig, jo
             let _ = events.blocking_send(EngineEvent::Done {
                 finish: result.finish,
                 prompt_tokens: result.prompt_tokens,
+                cached_prompt_tokens: result.cached_prompt_tokens,
                 generated_tokens: result.generated_tokens,
                 elapsed: result.elapsed,
             });
         }
         Err(err) => {
+            // État KV potentiellement incohérent → reset pour la prochaine
+            // requête plutôt que de propager la corruption.
+            session.reset_kv();
             let _ = events.blocking_send(EngineEvent::Error(err.to_string()));
         }
     }
