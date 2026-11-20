@@ -25,7 +25,7 @@ use quokka_hardware::{HardwareProfile, discovery};
 use crate::error::{CoreError, Result};
 
 /// Rôle d'un modèle dans le duo Flash/Expert.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ModelRole {
     /// Modèle 1B–3B résident pour les prompts simples.
     Flash,

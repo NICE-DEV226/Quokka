@@ -15,6 +15,7 @@ license = "Apache-2.0"
 [workspace.dependencies]
 # --- Crates internes --------------------------------------------------------
 quokka-hardware = { path = "crates/quokka-hardware", version = "0.1.0" }
+quokka-core = { path = "crates/quokka-core", version = "0.1.0" }
 
 # --- Erreurs & observabilité ------------------------------------------------
 thiserror = "2"
@@ -43,6 +44,12 @@ sha2 = "0.10"
 # --- Inférence (Phase 2) -----------------------------------------------------
 # Pin exact : llama-cpp-2 ne suit pas semver (voir docs/ROADMAP.md §1).
 llama-cpp-2 = "=0.1.161"
+
+# --- Serveur HTTP / SSE -------------------------------------------------------
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "net", "time"] }
+tokio-stream = "0.1"
+futures-util = "0.3"
 
 # --- CLI --------------------------------------------------------------------
 clap = { version = "4", features = ["derive"] }
