@@ -1,0 +1,12 @@
+# Build environment for the Quokka workspace.
+#
+# GGML_CPU_REPACK=OFF keeps quantized weights in their original GGUF
+# layout inside the file mmap instead of duplicating them into ggml's
+# runtime-repacked anonymous buffers. Measured on an i7-8565U / 16 GiB:
+# Private_Dirty dropped from ~4.4 GiB to ~55 MiB and available RAM rose
+# from ~7 GiB to ~11 GiB, with no decode-speed regression observed.
+# Repack exists for faster CPU kernels on some parts (notably ARM) —
+# override per-build with `GGML_CPU_REPACK=ON cargo build` if your
+# target CPU benefits and RAM is not a constraint.
+[env]
+GGML_CPU_REPACK = { value = "OFF", force = false }
