@@ -183,14 +183,10 @@ fn hf_lfs_sha256(client: &Client, model: &ModelRef) -> Option<String> {
         .ok()?;
     entries
         .iter()
-        .find(|entry| {
-            entry.get("path").and_then(|p| p.as_str()) == Some(model.filename.as_str())
-        })
+        .find(|entry| entry.get("path").and_then(|p| p.as_str()) == Some(model.filename.as_str()))
         .and_then(|entry| entry.pointer("/lfs/oid"))
         .and_then(|oid| oid.as_str())
-        .filter(|oid| {
-            oid.len() == 64 && oid.bytes().all(|b| b.is_ascii_hexdigit())
-        })
+        .filter(|oid| oid.len() == 64 && oid.bytes().all(|b| b.is_ascii_hexdigit()))
         .map(str::to_owned)
 }
 
