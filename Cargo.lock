@@ -1405,6 +1405,7 @@ dependencies = [
  "quokka-core",
  "quokka-hardware",
  "quokka-server",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",
@@ -1449,12 +1450,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "quokka-router"
+version = "0.1.0"
+dependencies = [
+ "sysinfo",
+]
+
+[[package]]
 name = "quokka-server"
 version = "0.1.0"
 dependencies = [
  "axum",
  "futures-util",
  "quokka-core",
+ "quokka-router",
  "rust-embed",
  "serde",
  "serde_json",

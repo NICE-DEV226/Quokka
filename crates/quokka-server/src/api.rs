@@ -41,6 +41,8 @@ pub struct ServedModel {
     pub id: &'static str,
     /// Nom de fichier GGUF (pour résoudre `model` côté client).
     pub filename: String,
+    /// Taille du fichier en octets (garde mémoire du routeur).
+    pub size_bytes: u64,
 }
 
 /// Construit la liste des modèles servis depuis le pool (avant que
@@ -57,6 +59,9 @@ pub fn served_models(pool: &ModelPool) -> Vec<ServedModel> {
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default(),
+            size_bytes: std::fs::metadata(&loaded.path)
+                .map(|m| m.len())
+                .unwrap_or(0),
         })
         .collect()
 }
@@ -73,16 +78,38 @@ fn role_id(role: ModelRole) -> &'static str {
 pub struct AppState {
     engine: InferenceEngine,
     models: Arc<Vec<ServedModel>>,
+    router: Arc<quokka_router::Router>,
+    /// Taille de l'expert en Mio pour la garde mémoire du routeur.
+    expert_size_mb: u32,
     next_id: Arc<AtomicU64>,
+}
+
+/// Traçabilité du routage, exposée en en-têtes de réponse.
+#[derive(Debug, Clone)]
+pub struct RouteInfo {
+    /// Id du modèle effectivement utilisé.
+    pub model_used: String,
+    /// Durée du routage en millisecondes (0 si choix explicite).
+    pub route_ms: f32,
+    /// Raison du choix (`Debug` de `RouteReason`, ou "explicit").
+    pub reason: String,
 }
 
 impl AppState {
     /// Construit le state à partir du moteur et de la liste des modèles.
     #[must_use]
     pub fn new(engine: InferenceEngine, models: Vec<ServedModel>) -> Self {
+        let expert_size_mb = models
+            .iter()
+            .filter(|m| m.role == ModelRole::Expert)
+            .map(|m| m.size_bytes / (1024 * 1024))
+            .max()
+            .unwrap_or(0) as u32;
         Self {
             engine,
             models: Arc::new(models),
+            router: Arc::new(quokka_router::Router::new()),
+            expert_size_mb,
             next_id: Arc::new(AtomicU64::new(1)),
         }
     }
@@ -136,17 +163,25 @@ async fn health() -> Json<serde_json::Value> {
 }
 
 async fn models(State(state): State<AppState>) -> Json<ModelsResponse> {
+    let mut data: Vec<ModelInfo> = Vec::with_capacity(state.models.len() + 1);
+    // Le routeur n'a de sens que si les deux rôles sont chargés.
+    let has_flash = state.models.iter().any(|m| m.role == ModelRole::Flash);
+    let has_expert = state.models.iter().any(|m| m.role == ModelRole::Expert);
+    if has_flash && has_expert {
+        data.push(ModelInfo {
+            id: "auto",
+            object: "model",
+            owned_by: "quokka-router".to_owned(),
+        });
+    }
+    data.extend(state.models.iter().map(|m| ModelInfo {
+        id: m.id,
+        object: "model",
+        owned_by: m.filename.clone(),
+    }));
     Json(ModelsResponse {
         object: "list",
-        data: state
-            .models
-            .iter()
-            .map(|m| ModelInfo {
-                id: m.id,
-                object: "model",
-                owned_by: m.filename.clone(),
-            })
-            .collect(),
+        data,
     })
 }
 
@@ -174,13 +209,33 @@ async fn chat_completions(
         .iter()
         .map(|m| (m.id, m.filename.as_str()))
         .collect();
-    let Some(role) = request.resolve_role(&served) else {
-        return error_response(
-            StatusCode::NOT_FOUND,
-            "requested model is not served — see GET /v1/models",
-        );
+
+    // `auto` / `quokka-auto` / absence de `model` → le routeur décide.
+    // C'est le comportement par défaut : Quokka choisit Flash ou Expert.
+    let auto_requested = request
+        .model
+        .as_deref()
+        .is_none_or(|m| matches!(m, "auto" | "quokka-auto" | "quokka"));
+    let (role, route) = if auto_requested {
+        route_request(&state, &request)
+    } else {
+        let Some(role) = request.resolve_role(&served) else {
+            return error_response(
+                StatusCode::NOT_FOUND,
+                "requested model is not served — see GET /v1/models",
+            );
+        };
+        (
+            role,
+            RouteInfo {
+                model_used: role_id(role).to_owned(),
+                route_ms: 0.0,
+                reason: "explicit".to_owned(),
+            },
+        )
     };
 
+    let model_id = route.model_used.clone();
     let (events_tx, events_rx) = tokio_mpsc::channel::<EngineEvent>(64);
     let config = request.generation_config();
     let job = Job {
@@ -200,12 +255,64 @@ async fn chat_completions(
         return error_response(StatusCode::SERVICE_UNAVAILABLE, message);
     }
 
-    let model_id = role_id(role).to_owned();
     if request.stream {
-        sse_response(state, events_rx, model_id).await
+        sse_response(state, events_rx, model_id, &route).await
     } else {
-        json_response(state, events_rx, model_id).await
+        json_response(state, events_rx, model_id, &route).await
     }
+}
+
+/// Route une requête `auto` : classifie le dernier message porteur via
+/// `quokka-router` (< 2 ms) puis rabat sur un rôle réellement servi si
+/// le duo complet n'est pas chargé.
+fn route_request(state: &AppState, request: &ChatCompletionRequest) -> (ModelRole, RouteInfo) {
+    let text = request
+        .messages
+        .iter()
+        .rev()
+        .map(|m| m.content.as_str())
+        .find(|c| !c.trim().is_empty())
+        .unwrap_or_default();
+    let ctx = quokka_router::RouteContext::system(state.expert_size_mb);
+    let decision = state.router.route(text, &ctx);
+    let mut role = match decision.target {
+        quokka_router::RouteTarget::Flash => ModelRole::Flash,
+        quokka_router::RouteTarget::Expert => ModelRole::Expert,
+    };
+    // Un seul rôle chargé → on sert ce qui existe (mieux que 503).
+    let served_roles = state.engine.roles();
+    if !served_roles.contains(&role) {
+        role = served_roles
+            .iter()
+            .copied()
+            .find(|r| *r == ModelRole::Flash)
+            .or_else(|| served_roles.first().copied())
+            .unwrap_or(ModelRole::Flash);
+    }
+    (
+        role,
+        RouteInfo {
+            model_used: role_id(role).to_owned(),
+            route_ms: decision.elapsed.as_secs_f32() * 1e3,
+            reason: format!("{:?}", decision.reason),
+        },
+    )
+}
+
+/// Ajoute les en-têtes de traçabilité Quokka à une réponse.
+fn with_route_headers(mut response: Response, route: &RouteInfo) -> Response {
+    let headers = response.headers_mut();
+    let route_ms = format!("{:.3}", route.route_ms);
+    for (name, value) in [
+        ("x-quokka-model-used", route.model_used.as_str()),
+        ("x-quokka-route-time-ms", route_ms.as_str()),
+        ("x-quokka-route-reason", route.reason.as_str()),
+    ] {
+        if let Ok(v) = axum::http::HeaderValue::from_str(value) {
+            headers.insert(name, v);
+        }
+    }
+    response
 }
 
 /// Agrège les événements en une réponse `chat.completion` JSON.
@@ -213,6 +320,7 @@ async fn json_response(
     state: AppState,
     mut events_rx: tokio_mpsc::Receiver<EngineEvent>,
     model_id: String,
+    route: &RouteInfo,
 ) -> Response {
     let id = state.completion_id();
     let created = state.unix_now();
@@ -243,7 +351,7 @@ async fn json_response(
         }
     }
 
-    Json(ChatCompletionResponse {
+    let response = Json(ChatCompletionResponse {
         object: "chat.completion",
         id,
         created,
@@ -267,7 +375,8 @@ async fn json_response(
             ),
         },
     })
-    .into_response()
+    .into_response();
+    with_route_headers(response, route)
 }
 
 /// Traduit le flux d'événements en SSE `chat.completion.chunk`.
@@ -275,6 +384,7 @@ async fn sse_response(
     state: AppState,
     events_rx: tokio_mpsc::Receiver<EngineEvent>,
     model_id: String,
+    route: &RouteInfo,
 ) -> Response {
     let id = state.completion_id();
     let created = state.unix_now();
@@ -312,13 +422,14 @@ async fn sse_response(
         stream::iter(out.into_iter().map(Ok::<_, Infallible>))
     });
 
-    Sse::new(events)
+    let response = Sse::new(events)
         .keep_alive(
             axum::response::sse::KeepAlive::new()
                 .interval(Duration::from_secs(15))
                 .text("keep-alive"),
         )
-        .into_response()
+        .into_response();
+    with_route_headers(response, route)
 }
 
 fn chunk_event(
