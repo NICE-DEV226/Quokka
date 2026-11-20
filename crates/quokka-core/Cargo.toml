@@ -8,6 +8,9 @@ license.workspace = true
 
 [dependencies]
 llama-cpp-2 = { workspace = true }
+# Requis pour les enums bruts non ré-exportés par llama-cpp-2
+# (flash_attn_type). Même pin exact que llama-cpp-2.
+llama-cpp-sys-2 = "=0.1.161"
 quokka-hardware = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }

@@ -17,7 +17,7 @@ use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
 
 use llama_cpp_2::context::LlamaContext;
-use llama_cpp_2::context::params::LlamaContextParams;
+use llama_cpp_2::context::params::{KvCacheType, LlamaContextParams};
 use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::{LlamaChatMessage, LlamaChatTemplate, LlamaModel};
@@ -167,7 +167,14 @@ impl<'a> InferenceSession<'a> {
             .with_n_ubatch(config.n_batch.max(1))
             .with_n_seq_max(1)
             .with_n_threads(n_threads)
-            .with_n_threads_batch(n_threads);
+            .with_n_threads_batch(n_threads)
+            // Flash attention : moins de bande passante sur le KV-cache,
+            // gain net sur les contextes longs — sans perte de qualité.
+            .with_flash_attention_policy(llama_cpp_sys_2::LLAMA_FLASH_ATTN_TYPE_ENABLED)
+            // KV-cache quantifié q8_0 : ~2× moins de RAM qu'en f16 et
+            // souvent plus rapide (decode est memory-bound).
+            .with_type_k(KvCacheType::Q8_0)
+            .with_type_v(KvCacheType::Q8_0);
 
         let ctx = model
             .new_context(backend, params)

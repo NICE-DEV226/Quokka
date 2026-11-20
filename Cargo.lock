@@ -1370,6 +1370,7 @@ name = "quokka-core"
 version = "0.1.0"
 dependencies = [
  "llama-cpp-2",
+ "llama-cpp-sys-2",
  "quokka-hardware",
  "serde",
  "thiserror 2.0.21",
