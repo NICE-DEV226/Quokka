@@ -17,6 +17,7 @@ license = "Apache-2.0"
 quokka-hardware = { path = "crates/quokka-hardware", version = "0.1.0" }
 quokka-core = { path = "crates/quokka-core", version = "0.1.0" }
 quokka-server = { path = "crates/quokka-server", version = "0.1.0" }
+quokka-router = { path = "crates/quokka-router", version = "0.1.0" }
 
 # --- Erreurs & observabilité ------------------------------------------------
 thiserror = "2"
