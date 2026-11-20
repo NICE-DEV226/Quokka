@@ -164,7 +164,10 @@ fn load_one(
 
 /// Résout le GGUF d'un `ModelSpec` : `~/.quokka/models/<filename>` puis
 /// n'importe quel blob découvert (Ollama, LM Studio, cache HF).
-fn resolve_model_path(spec: &ModelSpec) -> Result<PathBuf> {
+///
+/// Publique pour `quokka status` : vérifie la présence effective d'un
+/// modèle sans le charger.
+pub fn resolve_model_path(spec: &ModelSpec) -> Result<PathBuf> {
     let filename = &spec.model.filename;
 
     if let Some(dir) = quokka_hardware::download::models_dir() {

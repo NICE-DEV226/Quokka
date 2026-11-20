@@ -30,7 +30,7 @@ pub mod pool;
 pub mod session;
 
 pub use error::{CoreError, Result};
-pub use pool::{LoadedModel, ModelPool, ModelRole, compute_gpu_layers};
+pub use pool::{LoadedModel, ModelPool, ModelRole, compute_gpu_layers, resolve_model_path};
 pub use session::{
     ChatMessage, ChatResult, ChatRole, FinishReason, GenerationConfig, InferenceSession,
     SessionConfig,
