@@ -84,7 +84,20 @@ pub fn pull(
         download_sequential(&client, &url, &part_path, total, progress.clone())?;
     }
 
-    if let Some(expected) = &meta.sha256 {
+    // Source d'intégrité : `lfs.oid` de l'API HF en priorité — l'ETag du
+    // HEAD expose le *xetHash* sur les dépôts migrés Xet, pas le sha256
+    // (constaté sur bartowski/*-GGUF : hash attendu 4cb1…, fichier réel
+    // 6c1a… — le téléchargement était sain, c'est l'ETag qui mentait).
+    let expected_sha = hf_lfs_sha256(&client, model).or_else(|| {
+        if meta.sha256.is_some() {
+            tracing::warn!(
+                url = %url,
+                "HF API unreachable — falling back to ETag which may be a Xet hash"
+            );
+        }
+        meta.sha256.clone()
+    });
+    if let Some(expected) = &expected_sha {
         let actual = sha256_file(&part_path)?;
         if !actual.eq_ignore_ascii_case(expected) {
             return Err(HardwareError::Integrity {
@@ -151,6 +164,34 @@ fn probe_range_support(client: &Client, url: &str) -> Result<bool> {
         return Ok(false);
     }
     Ok(response.status() == StatusCode::PARTIAL_CONTENT)
+}
+
+/// SHA-256 LFS faisant foi, via `POST /api/models/{repo}/paths-info`.
+/// `None` si l'API est injoignable ou le fichier n'est pas en LFS.
+fn hf_lfs_sha256(client: &Client, model: &ModelRef) -> Option<String> {
+    let url = format!(
+        "https://huggingface.co/api/models/{}/paths-info/main",
+        model.repo_id
+    );
+    let entries: Vec<serde_json::Value> = client
+        .post(&url)
+        .json(&serde_json::json!({ "paths": [model.filename] }))
+        .send()
+        .and_then(reqwest::blocking::Response::error_for_status)
+        .ok()?
+        .json()
+        .ok()?;
+    entries
+        .iter()
+        .find(|entry| {
+            entry.get("path").and_then(|p| p.as_str()) == Some(model.filename.as_str())
+        })
+        .and_then(|entry| entry.pointer("/lfs/oid"))
+        .and_then(|oid| oid.as_str())
+        .filter(|oid| {
+            oid.len() == 64 && oid.bytes().all(|b| b.is_ascii_hexdigit())
+        })
+        .map(str::to_owned)
 }
 
 fn meta_from_headers(headers: &reqwest::header::HeaderMap) -> RemoteMeta {
