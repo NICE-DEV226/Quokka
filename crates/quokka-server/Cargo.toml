@@ -16,6 +16,8 @@ axum = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }
 futures-util = { workspace = true }
+# debug : lit ui/dist depuis le disque (itération) ; release : embed dans le binaire
+rust-embed = "8.14"
 
 [lints]
 workspace = true

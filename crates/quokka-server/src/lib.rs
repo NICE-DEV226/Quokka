@@ -8,6 +8,7 @@
 
 pub mod api;
 pub mod engine;
+pub mod static_files;
 pub mod types;
 
 pub use api::{AppState, ServedModel, router, serve, served_models};

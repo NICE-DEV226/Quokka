@@ -107,9 +107,11 @@ impl AppState {
 /// Construit le router axum.
 pub fn router(state: AppState) -> Router {
     Router::new()
+        .route("/", get(crate::static_files::index))
         .route("/health", get(health))
         .route("/v1/models", get(models))
         .route("/v1/chat/completions", post(chat_completions))
+        .route("/{*path}", get(crate::static_files::asset))
         .with_state(state)
 }
 
