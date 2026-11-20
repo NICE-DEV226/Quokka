@@ -26,5 +26,7 @@
 //! ```
 
 pub mod error;
+pub mod pool;
 
 pub use error::{CoreError, Result};
+pub use pool::{LoadedModel, ModelPool, ModelRole, compute_gpu_layers};
