@@ -27,6 +27,11 @@
 
 pub mod error;
 pub mod pool;
+pub mod session;
 
 pub use error::{CoreError, Result};
 pub use pool::{LoadedModel, ModelPool, ModelRole, compute_gpu_layers};
+pub use session::{
+    ChatMessage, ChatResult, ChatRole, FinishReason, GenerationConfig, InferenceSession,
+    SessionConfig,
+};
