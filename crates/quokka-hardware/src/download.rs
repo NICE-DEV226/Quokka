@@ -35,6 +35,9 @@ const SEGMENT_MIN_BYTES: u64 = 64 * 1024 * 1024;
 /// Le mode parallèle ne se justifie qu'à partir de deux segments pleins.
 const PARALLEL_MIN_BYTES: u64 = 2 * SEGMENT_MIN_BYTES;
 const MAX_PARALLEL_WORKERS: usize = 8;
+/// Tentatives par segment : une coupure CDN ne doit pas corrompre le
+/// fichier — les écritures à offset absolu sont idempotentes.
+const MAX_SEGMENT_ATTEMPTS: u32 = 3;
 /// Tampon de hash et de lecture : 1 Mio, cache-friendly.
 const IO_BUF_BYTES: usize = 1024 * 1024;
 const USER_AGENT: &str = concat!("quokka/", env!("CARGO_PKG_VERSION"));
@@ -302,7 +305,8 @@ fn download_parallel(
     Ok(())
 }
 
-/// Un segment `[start, end)` : GET `Range`, écriture à offset absolu.
+/// Un segment `[start, end)` : GET `Range`, écriture à offset absolu,
+/// avec retry — une réponse tronquée ne doit jamais laisser de trou.
 fn fetch_segment(
     client: &Client,
     url: &str,
@@ -311,6 +315,34 @@ fn fetch_segment(
     end: u64,
     progress: Arc<Progress>,
 ) -> Result<()> {
+    let mut attempt = 0_u32;
+    loop {
+        match fetch_segment_once(client, url, part_path, start, end, progress.clone()) {
+            Ok(()) => return Ok(()),
+            Err(err) if attempt + 1 < MAX_SEGMENT_ATTEMPTS => {
+                attempt += 1;
+                tracing::warn!(
+                    %url, start, end, attempt, error = %err,
+                    "segment download failed, retrying"
+                );
+                thread::sleep(std::time::Duration::from_millis(200 * u64::from(attempt)));
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+/// Une tentative de segment. Toute anomalie (statut, longueur annoncée,
+/// octets écrits ≠ plage demandée) est une erreur — jamais de trou muet.
+fn fetch_segment_once(
+    client: &Client,
+    url: &str,
+    part_path: &Path,
+    start: u64,
+    end: u64,
+    progress: Arc<Progress>,
+) -> Result<()> {
+    let expected = end - start;
     let response = client
         .get(url)
         .header(RANGE, format!("bytes={start}-{}", end - 1))
@@ -325,6 +357,18 @@ fn fetch_segment(
             end,
         });
     }
+    if let Some(declared) = response.content_length()
+        && declared != expected
+    {
+        return Err(io_err(
+            part_path,
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("segment {start}-{end}: server sent {declared} bytes, expected {expected}"),
+            ),
+        ));
+    }
+
     let mut file = OpenOptions::new()
         .write(true)
         .open(part_path)
@@ -336,8 +380,22 @@ fn fetch_segment(
         inner: io::BufReader::with_capacity(IO_BUF_BYTES, response),
         progress,
     };
-    io::copy(&mut counted, &mut file).map_err(|source| io_err(part_path, source))?;
-    file.flush().map_err(|source| io_err(part_path, source))
+    let written = io::copy(&mut counted, &mut file).map_err(|source| io_err(part_path, source))?;
+    file.flush().map_err(|source| io_err(part_path, source))?;
+
+    // `io::copy` s'arrête sur EOF propre : un body plus court que la plage
+    // demandée passe inaperçu sans ce contrôle — c'est ce qui a corrompu
+    // le premier téléchargement (trou de ~120 Mio → sha256 mismatch).
+    if written != expected {
+        return Err(io_err(
+            part_path,
+            io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                format!("segment {start}-{end}: wrote {written} bytes, expected {expected}"),
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// Compteur de progression thread-safe : `report` est sérialisé par mutex
@@ -352,7 +410,9 @@ impl Progress {
     fn add(&self, bytes: u64) {
         let downloaded = self.downloaded.fetch_add(bytes, Ordering::Relaxed) + bytes;
         if let Ok(report) = self.report.lock() {
-            report(downloaded, self.total);
+            // Les retries de segment recompteraient leurs octets : on borne
+            // l'affichage à `total` (cosmétique, le fichier reste exact).
+            report(downloaded.min(self.total), self.total);
         }
     }
 }

@@ -68,8 +68,7 @@ struct HardwareReport {
     local_model_bytes: u64,
 }
 
-#[tokio::main(flavor = "multi_thread")]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     // Silencieux par défaut ; RUST_LOG=debug pour la traçabilité des probes.
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -83,7 +82,16 @@ async fn main() -> Result<()> {
     match cli.command {
         Command::Hardware { json } => print_hardware(json),
         Command::Pull { target } => pull_models(&target),
-        Command::Run { listen } => run_server(&listen).await,
+        // Runtime dédié : `main` reste sync car le downloader crée son
+        // propre runtime en interne — le dropper depuis un contexte async
+        // panique (tokio blocking/shutdown.rs).
+        Command::Run { listen } => {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .context("tokio runtime")?;
+            runtime.block_on(run_server(&listen))
+        }
         Command::Status { json } => print_status(json),
     }
 }
