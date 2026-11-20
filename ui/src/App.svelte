@@ -14,6 +14,7 @@
   let activeId = $state(null);
   let input = $state('');
   let streaming = $state(false);
+  let streamText = $state('');
   let railOpen = $state(false);
   let abortCtrl = null;
   let scrollEl;
@@ -85,6 +86,9 @@
       chats = [chat, ...chats];
       activeId = chat.id;
     }
+    // Toujours muter via l'objet stocké dans $state (proxy), jamais la
+    // référence brute — sinon le template lit une autre instance.
+    chat = chats.find((c) => c.id === chat.id) ?? chat;
     const assistantMsg = { role: 'assistant', content: '' };
     chat.messages = [...chat.messages, { role: 'user', content: text }, assistantMsg];
     chat.title = chatTitle(chat.messages);
@@ -93,31 +97,46 @@
     saveChats();
 
     streaming = true;
+    streamText = '';
     abortCtrl = new AbortController();
+    const lastIdx = () => chat.messages.length - 1;
+    const patchLast = (patch) => {
+      chat.messages = chat.messages.map((m, i) =>
+        i === lastIdx() ? { ...m, ...patch } : m,
+      );
+      chats = [...chats]; // notify même si `chat` est un objet brut
+    };
     try {
       const history = chat.messages.slice(0, -1).map((m) => ({ role: m.role, content: m.content }));
       const result = await streamChat({
         model,
         messages: history,
         signal: abortCtrl.signal,
-        onToken: (t) => {
-          assistantMsg.content += t;
-          chats = [...chats]; // re-render streaming text
-        },
+        onToken: (t) => { streamText += t; },
       });
-      assistantMsg.content = result.content || assistantMsg.content;
-      assistantMsg.usage = result.usage;
+      patchLast({
+        content: streamText || result.content || '⚠ The model returned an empty response.',
+        usage: result.usage,
+      });
     } catch (err) {
       if (err.name !== 'AbortError') {
-        assistantMsg.content = `⚠ ${err.message}`;
+        patchLast({ content: `⚠ ${err.message}` });
       } else {
         chat.messages = chat.messages.slice(0, -1); // drop empty assistant msg
+        chats = [...chats];
       }
     } finally {
       streaming = false;
       abortCtrl = null;
       saveChats();
     }
+  }
+
+  function shown(msg, i) {
+    return (
+      msg.content ||
+      (streaming && i === active?.messages?.length - 1 ? streamText : '')
+    );
   }
 
   function stop() {
@@ -221,8 +240,8 @@
                 <div class="assistant-col">
                   <span class="author">quokka</span>
                   <div class="bubble assistant">
-                    {#if msg.content}
-                      <div class="md">{@html renderMarkdown(msg.content)}</div>
+                    {#if shown(msg, i)}
+                      <div class="md">{@html renderMarkdown(shown(msg, i))}</div>
                     {:else if streaming && i === active.messages.length - 1}
                       <span class="caret">▍</span>
                     {/if}

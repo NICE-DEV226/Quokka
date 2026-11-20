@@ -50,6 +50,7 @@ export async function streamChat({ model, messages, signal, onToken }) {
       if (payload === '[DONE]') continue;
       try {
         const json = JSON.parse(payload);
+        if (json.error) throw new Error(json.error.message ?? 'stream error');
         const delta = json.choices?.[0]?.delta?.content;
         if (delta) {
           content += delta;
@@ -57,8 +58,10 @@ export async function streamChat({ model, messages, signal, onToken }) {
         }
         if (json.choices?.[0]?.finish_reason) finishReason = json.choices[0].finish_reason;
         if (json.usage) usage = json.usage;
-      } catch {
-        // partial JSON across chunk boundary — ignore
+      } catch (e) {
+        // SyntaxError = JSON coupé entre chunks TCP, on ignore.
+        // Toute autre erreur (not. payload {"error":…}) est fatale.
+        if (!(e instanceof SyntaxError)) throw e;
       }
     }
   }
