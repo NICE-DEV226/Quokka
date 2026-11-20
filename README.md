@@ -30,11 +30,12 @@ Local inference runners make you pick models by hand and happily eat every gigab
 
 ## Quickstart
 
-> **Status: Phase 1.** The workspace, hardware probe, model registry and Hugging Face downloader are live. The inference engine and router land in Phases 2–3 — see the [roadmap](#roadmap).
+> **Status: Phase 2.** Probe, downloader, `llama.cpp` inference engine and OpenAI-compatible API are live. Router, MCP and benchmarks land in Phases 3–4 — see the [roadmap](#roadmap).
 
 ```bash
-# Build from source (Rust ≥ 1.85)
+# Build from source (Rust ≥ 1.92, Node ≥ 20 for the Web UI)
 cargo build --release -p quokka
+cd ui && npm install && npm run build && cd ..   # one-time: build the embedded Web UI
 
 # 1. Probe CPU / RAM / SIMD / GPU — shows your tier and recommended model pair
 ./target/release/quokka hardware
@@ -43,9 +44,16 @@ cargo build --release -p quokka
 # 2. Download the recommended pair (or a specific target) into ~/.quokka/models
 ./target/release/quokka pull auto         # Flash + Expert for this machine
 ./target/release/quokka pull flash        # or: expert, lightweight, standard, workstation
+
+# 3. Serve — OpenAI API + Web UI on http://127.0.0.1:11435
+./target/release/quokka run
 ```
 
 Models already present in Ollama, LM Studio or the Hugging Face cache are detected and reused — Quokka never downloads a duplicate.
+
+## Web UI
+
+`quokka run` also serves an embedded chat UI at `http://127.0.0.1:11435` — conversations, SSE streaming, Flash/Expert picker, history in `localStorage`. Built with Vite + Svelte (`ui/`), embedded into the binary via `rust-embed`; no separate process, no external calls.
 
 ## CLI
 
@@ -53,6 +61,8 @@ Models already present in Ollama, LM Studio or the Hugging Face cache are detect
 | --- | --- |
 | `quokka hardware [--json]` | Probe the host and print the hardware profile, tier and recommended model pair |
 | `quokka pull <target>` | Download GGUF models — `auto`, `flash`, `expert`, or a tier name |
+| `quokka run [--listen <addr>]` | Load the Flash/Expert pair and serve API + Web UI (default `127.0.0.1:11435`) |
+| `quokka status [--json]` | Show tier, recommended pair and which GGUFs are present |
 
 ## Documentation
 
@@ -65,9 +75,9 @@ Models already present in Ollama, LM Studio or the Hugging Face cache are detect
 | Phase | Scope | Status |
 | --- | --- | --- |
 | 1 | Hardware probe, tier registry, GGUF discovery, HF downloader | ✅ Done |
-| 2 | `quokka-core` — `llama.cpp` FFI, `mmap` loading, OpenAI SSE API | 🚧 In progress |
+| 2 | `quokka-core` — `llama.cpp` FFI, `mmap` loading, OpenAI SSE API | ✅ Done |
 | 3 | Sub-2ms router, LZ4 KV-cache, `MemoryPressureFallback` | Planned |
-| 4 | MCP server, embedded Web UI, cross-compiled releases | Planned |
+| 4 | MCP server, benchmarks, cross-compiled releases | Planned |
 
 ## Repository layout
 
