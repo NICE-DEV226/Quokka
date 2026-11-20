@@ -55,6 +55,23 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Mesure les performances via le serveur en cours d'exécution :
+    /// latence préfill, débit de décodage et gain du KV-cache sur un
+    /// second tour de conversation. Nécessite `quokka run` actif.
+    Bench {
+        /// Adresse du serveur à tester.
+        #[arg(long, default_value = "127.0.0.1:11435")]
+        listen: String,
+        /// Modèle à benchmarker (`flash` ou `expert`).
+        #[arg(long, default_value = "flash")]
+        model: String,
+        /// Tokens générés pour la mesure de décodage.
+        #[arg(long, default_value_t = 64)]
+        tokens: u32,
+        /// Sortie JSON machine-readable.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// Charge utile de `quokka hardware --json`, consommable par les outils
@@ -93,6 +110,12 @@ fn main() -> Result<()> {
             runtime.block_on(run_server(&listen))
         }
         Command::Status { json } => print_status(json),
+        Command::Bench {
+            listen,
+            model,
+            tokens,
+            json,
+        } => bench(&listen, &model, tokens, json),
     }
 }
 
@@ -410,6 +433,184 @@ fn print_status(json: bool) -> Result<()> {
         "Local   : {} GGUF discovered ({})",
         local.len(),
         fmt_bytes(local.iter().map(|m| m.size_bytes).sum())
+    );
+    Ok(())
+}
+
+/// Réponse minimale de `/v1/chat/completions` pour le bench.
+#[derive(serde::Deserialize)]
+struct BenchReply {
+    choices: Vec<BenchChoice>,
+    usage: BenchUsage,
+}
+
+#[derive(serde::Deserialize)]
+struct BenchChoice {
+    message: BenchMessage,
+}
+
+#[derive(serde::Deserialize)]
+struct BenchMessage {
+    content: String,
+}
+
+#[derive(serde::Deserialize)]
+struct BenchUsage {
+    prompt_tokens: usize,
+    completion_tokens: usize,
+    #[serde(default)]
+    prompt_tokens_details: Option<BenchPromptDetails>,
+}
+
+#[derive(serde::Deserialize)]
+struct BenchPromptDetails {
+    cached_tokens: usize,
+}
+
+struct BenchSample {
+    wall: std::time::Duration,
+    prompt_tokens: usize,
+    completion_tokens: usize,
+    cached_tokens: usize,
+    text: String,
+}
+
+/// `quokka bench` — mesure via le serveur live : préfill (max_tokens=1),
+/// débit de décodage, et gain du KV-cache au second tour. Le nonce rend
+/// chaque prompt unique pour éviter les hits de cache entre runs.
+fn bench(listen: &str, model: &str, tokens: u32, json: bool) -> Result<()> {
+    let base = format!("http://{listen}");
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(600))
+        .build()
+        .context("http client")?;
+
+    client
+        .get(format!("{base}/health"))
+        .send()
+        .and_then(reqwest::blocking::Response::error_for_status)
+        .with_context(|| format!("server unreachable at {base} — start `quokka run` first"))?;
+
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    // ~100 tokens de prompt : assez long pour que le préfill soit mesurable.
+    // Deux nonces distincts : R1 et R2 ne doivent PAS partager de préfixe,
+    // sinon R2 hériterait du KV-cache de R1 et la mesure de décodage serait
+    // faussée (le préfill serait sauté).
+    let prompt_a = format!(
+        "Benchmark context {nonce}-a. The quick brown fox jumps over the lazy dog. \
+         Pack my box with five dozen liquor jugs. How vexingly quick daft zebras jump! \
+         Sphinx of black quartz, judge my vow. Write a detailed explanation of how \
+         a transformer neural network processes this text, covering attention, \
+         feed-forward layers and residual connections."
+    );
+    let prompt_b = prompt_a.replacen("-a.", "-b.", 1);
+
+    let post = |messages: serde_json::Value, max_tokens: u32| -> Result<BenchSample> {
+        let body = serde_json::json!({
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": 0,
+        });
+        let started = std::time::Instant::now();
+        let reply: BenchReply = client
+            .post(format!("{base}/v1/chat/completions"))
+            .json(&body)
+            .send()
+            .and_then(reqwest::blocking::Response::error_for_status)
+            .context("chat completion request")?
+            .json()
+            .context("parse chat completion")?;
+        let wall = started.elapsed();
+        let usage = reply.usage;
+        Ok(BenchSample {
+            wall,
+            prompt_tokens: usage.prompt_tokens,
+            completion_tokens: usage.completion_tokens,
+            cached_tokens: usage
+                .prompt_tokens_details
+                .map_or(0, |d| d.cached_tokens),
+            text: reply
+                .choices
+                .into_iter()
+                .next()
+                .map_or(String::new(), |c| c.message.content),
+        })
+    };
+
+    // R1 : max_tokens=1 → quasi-pur préfill (overhead HTTP inclus).
+    let r1 = post(
+        serde_json::json!([{"role":"user","content":prompt_a}]),
+        1,
+    )?;
+    // R2 : prompt différent → pas de hit de cache ;
+    // la différence wall2-wall1 isole le décodage de `tokens` tokens.
+    let r2 = post(
+        serde_json::json!([{"role":"user","content":prompt_b}]),
+        tokens,
+    )?;
+    // R3 : second tour de la conversation de R2 → doit frapper le KV-cache.
+    let r3 = post(
+        serde_json::json!([
+            {"role":"user","content":prompt_b},
+            {"role":"assistant","content":r2.text},
+            {"role":"user","content":"Summarize the previous answer in one sentence."},
+        ]),
+        tokens.min(32),
+    )?;
+
+    let decode_secs = r2.wall.as_secs_f64() - r1.wall.as_secs_f64();
+    let decode_tps = if decode_secs > 0.0 && r2.completion_tokens > 1 {
+        (r2.completion_tokens - 1) as f64 / decode_secs
+    } else {
+        0.0
+    };
+
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "model": model,
+                "prefill": {
+                    "wall_ms": r1.wall.as_millis(),
+                    "prompt_tokens": r1.prompt_tokens,
+                },
+                "decode": {
+                    "wall_ms": r2.wall.as_millis(),
+                    "completion_tokens": r2.completion_tokens,
+                    "est_tokens_per_sec": decode_tps,
+                },
+                "cached_turn": {
+                    "wall_ms": r3.wall.as_millis(),
+                    "prompt_tokens": r3.prompt_tokens,
+                    "cached_tokens": r3.cached_tokens,
+                    "completion_tokens": r3.completion_tokens,
+                },
+            })
+        );
+        return Ok(());
+    }
+
+    println!("Quokka · Bench ({model} @ {base})");
+    println!("─────────────────────────────────────────");
+    println!(
+        "Prefill   : {:>7.0} ms  ({} prompt tokens)",
+        r1.wall.as_secs_f64() * 1e3,
+        r1.prompt_tokens
+    );
+    println!(
+        "Decode    : {:>7.0} ms  → ~{decode_tps:.1} tok/s  ({} tokens)",
+        r2.wall.as_secs_f64() * 1e3,
+        r2.completion_tokens
+    );
+    println!(
+        "Cached    : {:>7.0} ms  ({} / {} prompt tokens réutilisés)",
+        r3.wall.as_secs_f64() * 1e3,
+        r3.cached_tokens,
+        r3.prompt_tokens
     );
     Ok(())
 }
