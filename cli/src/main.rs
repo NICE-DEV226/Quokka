@@ -13,6 +13,8 @@ use quokka_hardware::registry::ModelSpec;
 use quokka_hardware::{GpuBackend, HardwareProfile, Tier, discovery, download, registry};
 use quokka_server::{AppState, InferenceEngine};
 
+mod mcp;
+
 #[derive(Debug, Parser)]
 #[command(
     name = "quokka",
@@ -73,6 +75,14 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Démarre un serveur MCP (stdio) proxyfiant l'API d'un `quokka run`
+    /// en cours — pour Cursor, Claude Code et autres clients MCP.
+    /// Outils : `quokka_chat`, `quokka_models`, `quokka_route`.
+    Mcp {
+        /// Adresse du serveur Quokka à proxyfier.
+        #[arg(long, default_value = "http://127.0.0.1:11435")]
+        url: String,
+    },
 }
 
 /// Charge utile de `quokka hardware --json`, consommable par les outils
@@ -117,6 +127,13 @@ fn main() -> Result<()> {
             tokens,
             json,
         } => bench(&listen, &model, tokens, json),
+        Command::Mcp { url } => {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .context("tokio runtime")?;
+            runtime.block_on(mcp::run(url))
+        }
     }
 }
 

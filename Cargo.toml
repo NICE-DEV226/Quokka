@@ -44,6 +44,11 @@ reqwest = { version = "0.12", default-features = false, features = [
 ] }
 sha2 = "0.10"
 lz4_flex = "0.11"
+rmcp = { version = "3.11", default-features = false, features = [
+    "server",
+    "macros",
+    "transport-io",
+] }
 
 # --- Inférence (Phase 2) -----------------------------------------------------
 # Pin exact : llama-cpp-2 ne suit pas semver (voir docs/ROADMAP.md §1).
