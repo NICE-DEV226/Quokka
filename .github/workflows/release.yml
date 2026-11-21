@@ -33,13 +33,13 @@ jobs:
             os: ubuntu-latest
             features: vulkan
             archive: tar.gz
-            apt: "libvulkan-dev glslc glslang-tools"
+            apt: "libvulkan-dev glslc glslang-tools spirv-headers vulkan-headers"
           - name: windows-x86_64-cpu
             os: windows-latest
             features: ""
             archive: zip
           - name: macos-aarch64-metal
-            os: macos-14
+            os: macos-latest
             features: metal
             archive: tar.gz
     steps:
@@ -117,16 +117,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Avant rustup : l'image cuda ne fournit pas curl.
+      - name: Install build deps
+        run: |
+          apt-get update
+          apt-get install -y build-essential cmake pkg-config curl git
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
-
-      - name: Install build deps
-        run: |
-          apt-get update
-          apt-get install -y build-essential cmake pkg-config curl git
 
       - name: Verify CUDA toolkit
         run: nvcc --version | tail -2
