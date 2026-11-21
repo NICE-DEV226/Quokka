@@ -22,3 +22,10 @@ rmcp = { workspace = true }
 
 [lints]
 workspace = true
+
+# Forward des backends GPU vers quokka-core pour les builds release.
+[features]
+default = []
+cuda = ["quokka-core/cuda"]
+vulkan = ["quokka-core/vulkan"]
+metal = ["quokka-core/metal"]

@@ -19,3 +19,12 @@ lz4_flex = { workspace = true }
 
 [lints]
 workspace = true
+
+# Backends GPU optionnels — activés par leg de release
+# (`cargo build --features cuda|vulkan|metal`). llama-cpp-2 forwarde
+# vers llama-cpp-sys-2 ; les features se cumulent sans conflit.
+[features]
+default = []
+cuda = ["llama-cpp-2/cuda"]
+vulkan = ["llama-cpp-2/vulkan"]
+metal = ["llama-cpp-2/metal"]
