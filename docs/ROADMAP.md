@@ -19,7 +19,7 @@ the ecosystem survey (Nov 2026), and the verification gate closing each phase.
 | Router (`quokka-router`) | ✅ Done | Stage 1 lexical + domain markers, `routing.toml` rules/`[policy]`, Stage 2 centroid-IDF classifier (ADR-0004, ONNX deferred), memory guard, `model=auto` + `X-Quokka-*` headers, corpus 137 prompts @ 100 %, criterion bench ~0,3–5,5 µs |
 | Server / Web UI | ✅ Done | OpenAI JSON+SSE, `auto` model, embedded Svelte UI |
 | KV-cache LZ4 offload | ✅ Done | `state_save_file`/`state_load_file` + LZ4, session_key = 1er msg user, LRU 8/model, `~/.quokka/cache/kv` — vérifié live : retour conversation → `cached_tokens` = prompt+généré restaurés |
-| MCP / Telemetry | ❌ Not started | Phase 4 |
+| MCP / Telemetry | 🟡 Partial | `quokka mcp` stdio server (rmcp 3.11) proxying HTTP API — tools `quokka_chat`/`quokka_models`/`quokka_route`, verified over stdio; `POST /v1/route` dry-run endpoint added. Telemetry not started |
 
 ### Known gaps to close inside Phase 2 prep
 
