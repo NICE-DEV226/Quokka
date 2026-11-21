@@ -7,18 +7,19 @@ the ecosystem survey (Nov 2026), and the verification gate closing each phase.
 
 ---
 
-## 0. Current state audit (as of commit `29e6cdf`)
+## 0. Current state audit (as of commit `b09d97c`)
 
 | Area | State | Evidence |
 | --- | --- | --- |
 | Workspace & CI | ✅ Done | `cargo test`/`clippy -D warnings`/`fmt`/`cargo-deny` green on `main` |
 | `quokka-hardware` | ✅ Done | RAM (`MemAvailable`), CPU topology, SIMD runtime-detect, GPU probe CUDA→Metal→Vulkan→none, tier matrix, GGUF discovery (5 stores), HF downloader (ranged parallel + sha256 + resume) |
 | Registry | ✅ Done | `profiles.json` embedded + `~/.quokka/profiles.json` override |
-| CLI | 🟡 Partial | `hardware`, `pull` live; `run`, `status`, `bench` missing |
-| Inference (`quokka-core`) | ❌ Not started | Phase 2 |
-| Router (`quokka-router`) | ❌ Not started | Phase 3 |
-| Server / MCP / UI | ❌ Not started | Phase 4 |
-| Telemetry | ❌ Not started | Phase 4 |
+| CLI | ✅ Done | `hardware`, `pull`, `run`, `status`, `bench` live |
+| Inference (`quokka-core`) | ✅ Done | `llama-cpp-2` pinned, mmap load, persistent `InferenceSession` per worker, KV prefix reuse (`cached_tokens` in usage), Q8 KV + flash attention, `GGML_CPU_REPACK=OFF` |
+| Router (`quokka-router`) | ✅ Done | Stage 1 lexical + domain markers, `routing.toml` rules/`[policy]`, Stage 2 centroid-IDF classifier (ADR-0004, ONNX deferred), memory guard, `model=auto` + `X-Quokka-*` headers, corpus 137 prompts @ 100 %, criterion bench ~0,3–5,5 µs |
+| Server / Web UI | ✅ Done | OpenAI JSON+SSE, `auto` model, embedded Svelte UI |
+| KV-cache LZ4 offload | ❌ Not started | Phase 3 remainder — `state_save_file`/`state_load_file` exist in llama-cpp-2 |
+| MCP / Telemetry | ❌ Not started | Phase 4 |
 
 ### Known gaps to close inside Phase 2 prep
 
@@ -136,13 +137,18 @@ runtime changes).
 - `MemoryPressureFallback`: re-read `available_ram_mb` before Expert
   load; below `expert_size + 1500 MiB` → Flash + `tracing::warn!` event.
 
-### Verification gate
+### Verification gate — status
 
-- `benches/router_bench.rs`: p99 < 2.0 ms end-to-end on reference CPU.
-- Fixture corpus of ≥ 100 labeled prompts; report routing accuracy —
-  the 2 ms budget is meaningless if it routes everything to Flash.
+- ✅ `benches/router_bench.rs` : ~0,3–5,5 µs/appel, corpus 100 prompts
+  = 203 µs — p99 très en dessous de 2 ms sur CPU de référence (i7-8565U).
+- ✅ Corpus de 137 prompts labellisés : `crates/quokka-router/tests/
+  routing_corpus.rs`, précision mesurée **100 %** — *mais itérée contre
+  le classifieur* (sur-apprentissage possible, voir ADR-0004 ; un corpus
+  externe reste à constituer).
+- ⬜ KV-cache LZ4 (§3.3) : non commencé — `llama_state_save_file` /
+  `llama_state_load_file` sont exposés par llama-cpp-2 0.1.161.
 
----
+*Last updated: 2026-11-20, after Phase 3 router completion (`b09d97c`).*
 
 ## 4. Phase 4 — MCP, Web UI, release engineering
 

@@ -10,6 +10,7 @@ modifie pas : on la **remplace** par un nouvel ADR qui la supersède.
 | [0001](0001-inference-backend-bindings.md) | Bindings d'inférence : `llama-cpp-2` | Accepted | 2026-11-19 |
 | [0002](0002-router-classifier-stack.md) | Classifieur du routeur : heuristique + ONNX INT8 | Accepted | 2026-11-19 |
 | [0003](0003-hardware-probe-stack.md) | Stack de probe matériel : sysinfo + nvml-wrapper + ash | Accepted | 2026-11-19 |
+| [0004](0004-router-stage2-classifier.md) | Classifieur Stage 2 : centroïdes lexicaux IDF, ONNX différé | Accepted (réversible) | 2026-11-20 |
 
 ## Créer un ADR
 
