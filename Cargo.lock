@@ -1621,6 +1621,7 @@ dependencies = [
  "futures-util",
  "quokka-core",
  "quokka-router",
+ "quokka-telemetry",
  "rust-embed",
  "serde",
  "serde_json",
@@ -1628,6 +1629,14 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
+]
+
+[[package]]
+name = "quokka-telemetry"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
