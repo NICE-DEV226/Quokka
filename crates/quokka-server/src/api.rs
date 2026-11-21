@@ -84,6 +84,34 @@ pub struct AppState {
     next_id: Arc<AtomicU64>,
 }
 
+/// `POST /v1/route` — dry-run du routeur : même body que
+/// `/v1/chat/completions`, retourne la décision sans inférence.
+/// Utilisé par `quokka_route` (MCP) et le debugging.
+async fn route_dry_run(
+    State(state): State<AppState>,
+    Json(request): Json<ChatCompletionRequest>,
+) -> Response {
+    let auto_requested = request
+        .model
+        .as_deref()
+        .is_none_or(|m| matches!(m, "auto" | "quokka-auto" | "quokka"));
+    let route = if auto_requested {
+        route_request(&state, &request).1
+    } else {
+        RouteInfo {
+            model_used: request.model.clone().unwrap_or_default(),
+            route_ms: 0.0,
+            reason: "explicit".to_owned(),
+        }
+    };
+    Json(serde_json::json!({
+        "model": route.model_used,
+        "route_ms": route.route_ms,
+        "reason": route.reason,
+    }))
+    .into_response()
+}
+
 /// Traçabilité du routage, exposée en en-têtes de réponse.
 #[derive(Debug, Clone)]
 pub struct RouteInfo {
@@ -140,6 +168,7 @@ pub fn router(state: AppState) -> Router {
         .route("/health", get(health))
         .route("/v1/models", get(models))
         .route("/v1/chat/completions", post(chat_completions))
+        .route("/v1/route", post(route_dry_run))
         .route("/{*path}", get(crate::static_files::asset))
         .with_state(state)
 }
