@@ -146,6 +146,13 @@ jobs:
           npm run build
 
       - name: Build quokka (cuda)
+        env:
+          # Sans GPU au build, ggml-cuda compile pour TOUTES les
+          # architectures (50→121a, real+virtual) → binaire de 674 Mo.
+          # On garde la couverture grand public : archs "virtual"
+          # (PTX, JIT au premier run) pour les anciennes, "real" pour
+          # les architectures courantes et Blackwell.
+          CMAKE_CUDA_ARCHITECTURES: "61-virtual;70-virtual;75-virtual;80-virtual;86-real;89-real;90-virtual;120a-real"
         run: cargo build --release -p quokka --locked --features cuda
 
       - name: Package binary
