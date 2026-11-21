@@ -2,6 +2,7 @@
 //! téléchargement de modèles, serveur d'inférence OpenAI-compatible.
 
 use std::net::{SocketAddr, ToSocketAddrs};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -341,7 +342,16 @@ async fn run_server(listen: &str) -> Result<()> {
         println!("loaded {} → {}", model.id, model.filename);
     }
 
-    let engine = InferenceEngine::new(pool, SessionConfig::default());
+    // KV-cache persisté sur disque (LZ4, ~8 conversations par modèle) :
+    // revenir sur une ancienne conversation restaure son préfixe au lieu
+    // de re-payer tout le préfill. `None` si pas de home résolvable.
+    let session_config = SessionConfig {
+        kv_cache_dir: std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(|home| PathBuf::from(home).join(".quokka").join("cache").join("kv")),
+        ..SessionConfig::default()
+    };
+    let engine = InferenceEngine::new(pool, session_config);
     let state = AppState::new(engine, served);
 
     let addr: SocketAddr = listen
@@ -530,9 +540,7 @@ fn bench(listen: &str, model: &str, tokens: u32, json: bool) -> Result<()> {
             wall,
             prompt_tokens: usage.prompt_tokens,
             completion_tokens: usage.completion_tokens,
-            cached_tokens: usage
-                .prompt_tokens_details
-                .map_or(0, |d| d.cached_tokens),
+            cached_tokens: usage.prompt_tokens_details.map_or(0, |d| d.cached_tokens),
             text: reply
                 .choices
                 .into_iter()
@@ -542,10 +550,7 @@ fn bench(listen: &str, model: &str, tokens: u32, json: bool) -> Result<()> {
     };
 
     // R1 : max_tokens=1 → quasi-pur préfill (overhead HTTP inclus).
-    let r1 = post(
-        serde_json::json!([{"role":"user","content":prompt_a}]),
-        1,
-    )?;
+    let r1 = post(serde_json::json!([{"role":"user","content":prompt_a}]), 1)?;
     // R2 : prompt différent → pas de hit de cache ;
     // la différence wall2-wall1 isole le décodage de `tokens` tokens.
     let r2 = post(
