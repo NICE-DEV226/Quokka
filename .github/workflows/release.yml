@@ -147,12 +147,14 @@ jobs:
 
       - name: Build quokka (cuda)
         env:
-          # Sans GPU au build, ggml-cuda compile pour TOUTES les
-          # architectures (50→121a, real+virtual) → binaire de 674 Mo.
-          # On garde la couverture grand public : archs "virtual"
-          # (PTX, JIT au premier run) pour les anciennes, "real" pour
-          # les architectures courantes et Blackwell.
-          CMAKE_CUDA_ARCHITECTURES: "61-virtual;70-virtual;75-virtual;80-virtual;86-real;89-real;90-virtual;120a-real"
+          # Sans GPU au build, ggml-cuda compile du SASS "real" par
+          # arch → binaire de ~940 Mo. En "virtual" seul on n'embarque
+          # que du PTX : le driver CUDA le JIT-compile au premier run
+          # (cache driver ensuite) et la compatibilité ascendante PTX
+          # couvre sm_61 → sm_120+ sans cubin par arch.
+          # Trade-off assumé : quelques secondes de JIT au premier
+          # lancement sur la machine de l'utilisateur.
+          CMAKE_CUDA_ARCHITECTURES: "61-virtual;70-virtual;75-virtual;80-virtual"
         run: cargo build --release -p quokka --locked --features cuda
 
       - name: Package binary
