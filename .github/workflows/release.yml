@@ -145,6 +145,14 @@ jobs:
           npm ci
           npm run build
 
+      # build.rs de llama-cpp-sys-2 ne déclare rerun-if-env-changed que
+      # pour les vars GGML_* : un changement de CMAKE_CUDA_ARCHITECTURES
+      # ne re-déclenche pas cmake et le cache rust livrerait l'ancien
+      # binaire. On purge le package natif pour forcer une configure
+      # CMake propre (coût ~30-45 min, acceptable pour une release).
+      - name: Force llama.cpp rebuild
+        run: cargo clean -p llama-cpp-sys-2 --release
+
       - name: Build quokka (cuda)
         env:
           # Sans GPU au build, ggml-cuda compile du SASS "real" par
