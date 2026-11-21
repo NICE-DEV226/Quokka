@@ -159,10 +159,14 @@ jobs:
           # arch → binaire de ~940 Mo. En "virtual" seul on n'embarque
           # que du PTX : le driver CUDA le JIT-compile au premier run
           # (cache driver ensuite) et la compatibilité ascendante PTX
-          # couvre sm_61 → sm_120+ sans cubin par arch.
+          # couvre les archs cibles sans cubin SASS par arch.
           # Trade-off assumé : quelques secondes de JIT au premier
           # lancement sur la machine de l'utilisateur.
-          CMAKE_CUDA_ARCHITECTURES: "61-virtual;70-virtual;75-virtual;80-virtual"
+          # Couverture : sm_80+ (Ampere 2020 → Blackwell). compute_80
+          # couvre sm_80-89, compute_90 couvre sm_90/100/120 avec les
+          # chemins optimisés de chaque génération. Turing (sm_75) et
+          # avant → leg Vulkan (16 Mo) qui supporte ces GPU.
+          CMAKE_CUDA_ARCHITECTURES: "80-virtual;90-virtual"
         run: cargo build --release -p quokka --locked --features cuda
 
       - name: Package binary
