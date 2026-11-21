@@ -108,7 +108,9 @@ impl AppState {
         Self {
             engine,
             models: Arc::new(models),
-            router: Arc::new(quokka_router::Router::new()),
+            router: Arc::new(quokka_router::Router::load(
+                &quokka_router::default_config_path(),
+            )),
             expert_size_mb,
             next_id: Arc::new(AtomicU64::new(1)),
         }
@@ -300,7 +302,13 @@ fn route_request(state: &AppState, request: &ChatCompletionRequest) -> (ModelRol
 }
 
 /// Ajoute les en-têtes de traçabilité Quokka à une réponse.
-fn with_route_headers(mut response: Response, route: &RouteInfo) -> Response {
+/// `tokens_per_sec` n'est connu qu'une fois la génération terminée —
+/// les réponses SSE ne le portent donc pas (en-têtes déjà partis).
+fn with_route_headers(
+    mut response: Response,
+    route: &RouteInfo,
+    tokens_per_sec: Option<f32>,
+) -> Response {
     let headers = response.headers_mut();
     let route_ms = format!("{:.3}", route.route_ms);
     for (name, value) in [
@@ -311,6 +319,11 @@ fn with_route_headers(mut response: Response, route: &RouteInfo) -> Response {
         if let Ok(v) = axum::http::HeaderValue::from_str(value) {
             headers.insert(name, v);
         }
+    }
+    if let Some(tps) = tokens_per_sec
+        && let Ok(v) = axum::http::HeaderValue::from_str(&format!("{tps:.1}"))
+    {
+        headers.insert("x-quokka-tokens-per-sec", v);
     }
     response
 }
@@ -329,6 +342,7 @@ async fn json_response(
     let mut prompt_tokens = 0_usize;
     let mut cached_prompt_tokens = 0_usize;
     let mut generated_tokens = 0_usize;
+    let mut elapsed = Duration::ZERO;
 
     while let Some(event) = events_rx.recv().await {
         match event {
@@ -338,12 +352,13 @@ async fn json_response(
                 prompt_tokens: p,
                 cached_prompt_tokens: c,
                 generated_tokens: g,
-                ..
+                elapsed: e,
             } => {
                 finish = f;
                 prompt_tokens = p;
                 cached_prompt_tokens = c;
                 generated_tokens = g;
+                elapsed = e;
             }
             EngineEvent::Error(message) => {
                 return error_response(StatusCode::INTERNAL_SERVER_ERROR, &message);
@@ -376,7 +391,12 @@ async fn json_response(
         },
     })
     .into_response();
-    with_route_headers(response, route)
+    let tokens_per_sec = if elapsed.as_secs_f32() > 0.0 {
+        Some(generated_tokens as f32 / elapsed.as_secs_f32())
+    } else {
+        None
+    };
+    with_route_headers(response, route, tokens_per_sec)
 }
 
 /// Traduit le flux d'événements en SSE `chat.completion.chunk`.
@@ -429,7 +449,8 @@ async fn sse_response(
                 .text("keep-alive"),
         )
         .into_response();
-    with_route_headers(response, route)
+    // tok/s inconnu à l'envoi des en-têtes SSE — voir with_route_headers.
+    with_route_headers(response, route, None)
 }
 
 fn chunk_event(

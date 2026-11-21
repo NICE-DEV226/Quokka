@@ -9,12 +9,17 @@ publish = false
 
 [dependencies]
 quokka-hardware = { workspace = true }
+quokka-router = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
 
 [[bench]]
 name = "hardware_probe"
+harness = false
+
+[[bench]]
+name = "router_bench"
 harness = false
 
 [lints]
