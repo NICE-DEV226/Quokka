@@ -177,6 +177,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # --repo explicite : pas de checkout dans ce job, gh release
+          # create résoudrait sinon le dépôt via git remote.
           gh release create "${{ github.ref_name }}" artifacts/* \
+            --repo "${{ github.repository }}" \
             --title "Quokka ${{ github.ref_name }}" \
             --notes "Automated release — binaries per OS/GPU backend. See README for hardware requirements."
