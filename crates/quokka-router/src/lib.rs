@@ -33,11 +33,16 @@ pub enum RouteReason {
     ShortPrompt,
     /// Fence de code ou mot-clé de programmation détecté.
     CodeDetected,
+    /// Terme de domaine expert (systèmes distribués, crypto, maths
+    /// formelles…) détecté au Stage 1.
+    DomainDetected,
     /// Décision du classifieur sémantique (scores cosinus).
     Semantic { expert_score: f32, flash_score: f32 },
     /// L'expert a été choisi mais la RAM disponible est insuffisante —
     /// repli sur Flash plutôt que risquer un freeze (Memory Pressure Guard).
     MemoryPressureFallback { needed_mb: u32, available_mb: u32 },
+    /// Règle `[[rules]]` de `~/.quokka/routing.toml`.
+    Rule { name: String },
 }
 
 /// Décision de routage complète.
@@ -92,6 +97,63 @@ const CODE_MARKERS: &[&str] = &[
     "git rebase", "docker compose", "kubernetes", "http status",
 ];
 
+/// Termes techniques non ambigus matchés sur frontières de mot
+/// (`has_word`) — évite « improve »→« prove », « draft »→« raft ».
+const CODE_WORDS: &[&str] = &[
+    "binary search", "search tree", "lru cache", "memory leak", "unit test",
+    "unit tests", "integration test", "stack trace", "race condition",
+    "deadlock", "mutex", "rwlock", "null pointer", "segfault", "backpressure",
+    "nested loop", "producer consumer", "git hook", "cli tool", "yaml",
+    "sql", "nosql", "b-tree", "b tree", "b trees", "b-tree indexing",
+    "database indexing", "typescript", "javascript", "golang", "kotlin",
+    "swift", "c++", "c#", "objective-c", "php", "ruby", "scala", "haskell",
+    "lua", "perl", "bash", "powershell", "docker", "regex",
+];
+
+/// Langages ambigus seuls (« rust » oxydation, « python » serpent,
+/// « java » île) : ne déclenchent Expert qu'avec un contexte code.
+const LANGUAGES: &[&str] = &[
+    "rust", "python", "javascript", "typescript", "golang", "kotlin",
+    "swift", "c++", "c#", "php", "ruby", "scala", "haskell", "lua",
+    "perl", "bash", "powershell", "objective-c", "sql",
+];
+
+/// Contexte qui lève l'ambiguïté d'un nom de langage.
+const CODE_CONTEXT: &[&str] = &[
+    "function", "code", "program", "script", "error", "debug", "implement",
+    "refactor", "compile", "exception", "variable", "import ", "query",
+    "bug", "leak", "syntax", "runtime", "api", "endpoint", "test",
+];
+
+/// Marqueurs de domaine expert : termes qui signalent une charge de
+/// conception, de preuve ou de analyse profonde — au-delà de la simple
+/// syntaxe de code. Matchés avec frontière **début** (`has_word_start`)
+/// pour conserver le stemming (« postgres »→« postgresql ») sans
+/// sous-chaînes parasites.
+const EXPERT_DOMAIN_MARKERS: &[&str] = &[
+    // Systèmes distribués & infra
+    "distributed", "microservice", "shard", "consistent hashing", "consensus",
+    "raft", "paxos", "kafka", "rabbitmq", "event streaming", "cdn", "failover",
+    "disaster recovery", "saga", "exactly once", "eventual consistency",
+    "strong consistency", "rate limiter", "load balanc", "service mesh",
+    "kubernetes", "terraform", "postgres", "database schema", "migration",
+    "observability", "prometheus", "grafana", "feature store", "url shortener",
+    // Crypto & sécurité
+    "oauth", "tls ", "ssl ", "encryption", "cryptograph", "zero knowledge",
+    "vulnerabilit", "injection", "intrusion", "exfiltration", "penetration",
+    "authentication flow", "authorization", "certificate", "xss", "csrf",
+    // Algo, maths & ML
+    "proof", "prove", "theorem", "induction", "recurrence", "combinatoric",
+    "big o", "amortized", "asymptot", "np-complete", "eigenvalue", "matrix",
+    "integral", "derivative", "closed form", "bayes", "probability distribution",
+    "expected value", "variance", "overfitting", "bias variance", "gradient descent",
+    "convergence", "transformer", "attention mechanism", "positional encoding",
+    "complexity", "algorithm", "sorting", "recursion", "dynamic programming",
+    // Raisonnement & analyse
+    "analyze ", "analyse ", "tradeoff", "trade-off", "architecture",
+    "system design", "bottleneck", "scalability", "throughput", "latency",
+];
+
 /// Marqueurs de raisonnement qui empêchent le court-circuit « prompt
 /// court » — le Stage 2 décide ensuite.
 const REASONING_MARKERS: &[&str] = &[
@@ -103,6 +165,66 @@ const REASONING_MARKERS: &[&str] = &[
 /// Overrides explicites reconnus dans le texte utilisateur.
 const OVERRIDE_FLASH: &[&str] = &["@flash", "@fast"];
 const OVERRIDE_EXPERT: &[&str] = &["@expert", "@slow", "@deep"];
+
+/// Règle déclarative lue depuis `~/.quokka/routing.toml` (spec §4.2).
+/// La première règle qui matche gagne, avant la porte lexicale.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct RouteRule {
+    /// Nom de la règle (log + `RouteReason::Rule`).
+    pub name: String,
+    /// Mots-clés déclencheurs (sous-chaînes, insensibles à la casse).
+    #[serde(default)]
+    pub match_keywords: Vec<String>,
+    /// Court-circuite vers `target` si le prompt fait moins de N tokens
+    /// estimés — prioritaire sur `match_keywords` quand les deux sont vides ?
+    /// Non : les deux conditions sont ET.
+    #[serde(default)]
+    pub max_input_tokens: Option<usize>,
+    /// Cible forcée par la règle.
+    pub target_tier: String,
+}
+
+/// Politique de routage (`[policy]` du fichier TOML).
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct RoutePolicy {
+    /// `eco` | `balanced` | `performance` — module le seuil sémantique.
+    #[serde(default = "default_mode")]
+    pub mode: String,
+    /// Marge RAM au-delà de la taille expert (défaut spec : 1536 Mio).
+    #[serde(default = "default_buffer")]
+    pub ram_safety_buffer_mb: u32,
+}
+
+fn default_mode() -> String {
+    "balanced".to_owned()
+}
+
+fn default_buffer() -> u32 {
+    RAM_SAFETY_BUFFER_MB
+}
+
+/// Fichier de configuration optionnel.
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct RouteConfig {
+    /// `[policy]`.
+    #[serde(default)]
+    pub policy: Option<RoutePolicy>,
+    /// `[[rules]]`.
+    #[serde(default)]
+    pub rules: Vec<RouteRule>,
+}
+
+/// Chemin canonique `~/.quokka/routing.toml`.
+#[must_use]
+pub fn default_config_path() -> std::path::PathBuf {
+    dirs_home().join(".quokka").join("routing.toml")
+}
+
+fn dirs_home() -> std::path::PathBuf {
+    std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+}
 
 /// Ancres Expert : extraits représentatifs des charges que seul le
 /// grand modèle gère bien. Le centroïde est la moyenne de leurs vecteurs.
@@ -127,6 +249,33 @@ const EXPERT_ANCHORS: &[&str] = &[
     "debug why this container keeps getting oom killed under load",
     "explain transformer attention heads and rotary positional embeddings",
     "build a regex that validates international phone numbers",
+    // Architecture & systèmes distribués
+    "design a distributed cache with consistent hashing and replication",
+    "review this microservices architecture for bottlenecks and single points of failure",
+    "explain how database sharding and consistent hashing distribute load",
+    "design a rate limiter that handles burst traffic fairly across tenants",
+    "compare event streaming platforms kafka vs rabbitmq for our use case",
+    "explain how cdn edge caching and cache invalidation work at scale",
+    "design a notification system with exactly once delivery guarantees",
+    "explain saga pattern and distributed transactions across microservices",
+    "analyze tradeoffs of monolith vs microservices architecture for a startup",
+    "design multi region failover and disaster recovery for a database",
+    "explain consensus algorithms like raft and paxos in detail",
+    "explain how b tree and lsm tree indexing work inside databases",
+    // Maths, algo & ML
+    "prove by mathematical induction that this statement holds for all n",
+    "derive the closed form solution of this linear recurrence relation",
+    "analyze time complexity using big o and amortized analysis",
+    "explain bias variance tradeoff and overfitting in machine learning",
+    "derive bayes theorem and apply it to a medical diagnosis example",
+    "solve this combinatorics counting problem step by step",
+    "explain gradient descent convergence and learning rate scheduling",
+    // Sécurité & protocoles
+    "explain tls handshake and certificate validation at cryptographic level",
+    "review this authentication flow for oauth2 security vulnerabilities",
+    "explain symmetric vs asymmetric encryption and key exchange protocols",
+    "analyze this network traffic for signs of intrusion or exfiltration",
+    "explain how zero knowledge proofs work conceptually",
 ];
 
 /// Ancres Flash : charges triviales où le petit modèle suffit — les
@@ -164,6 +313,9 @@ const FLASH_ANCHORS: &[&str] = &[
     "how do I learn basic photography",
     "write a short story about a dragon and a knight",
     "what are the best beaches in portugal",
+    "improve this paragraph so it sounds more professional and fluent",
+    "edit this text for clarity and fix the grammar mistakes",
+    "make this email sound warmer and more friendly",
 ];
 
 /// Le routeur : centroïdes pré-calculés à la construction (~40 µs une
@@ -173,17 +325,62 @@ pub struct Router {
     idf: Vec<f32>,
     expert_centroid: Vec<f32>,
     flash_centroid: Vec<f32>,
+    /// Règles utilisateur (`routing.toml`), évaluées après les overrides.
+    rules: Vec<RouteRule>,
+    /// Marge ajoutée au score expert requis selon `policy.mode` :
+    /// `eco` > 0 (favorise Flash), `performance` < 0 (favorise Expert).
+    semantic_margin: f32,
+    /// Marge RAM de la garde mémoire (configurable via `[policy]`).
+    ram_buffer_mb: u32,
 }
 
 impl Router {
-    /// Pré-calcule IDF + centroïdes d'ancres.
+    /// Pré-calcule IDF + centroïdes d'ancres, sans fichier de config.
     #[must_use]
     pub fn new() -> Self {
+        Self::with_config(RouteConfig::default())
+    }
+
+    /// Charge `~/.quokka/routing.toml` si présent ; tout autre problème
+    /// (fichier absent, TOML invalide) retombe sur la config par défaut —
+    /// un fichier de config cassé ne doit jamais empêcher le serveur de
+    /// démarrer, mais l'erreur est loguée pour diagnostic.
+    #[must_use]
+    pub fn load(path: &std::path::Path) -> Self {
+        match std::fs::read_to_string(path) {
+            Ok(text) => match toml::from_str::<RouteConfig>(&text) {
+                Ok(config) => Self::with_config(config),
+                Err(err) => {
+                    tracing::warn!("invalid routing.toml at {}: {err} — using defaults", path.display());
+                    Self::new()
+                }
+            },
+            Err(_) => Self::new(),
+        }
+    }
+
+    /// Routeur avec configuration explicite (règles + politique).
+    #[must_use]
+    pub fn with_config(config: RouteConfig) -> Self {
         let idf = idf_weights(EXPERT_ANCHORS, FLASH_ANCHORS);
+        let (semantic_margin, ram_buffer_mb) = config
+            .policy
+            .map(|p| {
+                let margin = match p.mode.as_str() {
+                    "eco" => 0.05,
+                    "performance" => -0.05,
+                    _ => 0.0,
+                };
+                (margin, p.ram_safety_buffer_mb)
+            })
+            .unwrap_or((0.0, RAM_SAFETY_BUFFER_MB));
         Self {
             expert_centroid: centroid(EXPERT_ANCHORS, &idf),
             flash_centroid: centroid(FLASH_ANCHORS, &idf),
             idf,
+            rules: config.rules,
+            semantic_margin,
+            ram_buffer_mb,
         }
     }
 
@@ -199,12 +396,29 @@ impl Router {
 
         // Stage 1 — porte lexicale (< 0,1 ms).
         let lowered = text.to_lowercase();
+        let est_tokens = lowered.len() / 4;
         let decision = if OVERRIDE_EXPERT.iter().any(|m| has_token(&lowered, m)) {
             Some((RouteTarget::Expert, RouteReason::Override))
         } else if OVERRIDE_FLASH.iter().any(|m| has_token(&lowered, m)) {
             Some((RouteTarget::Flash, RouteReason::Override))
-        } else if CODE_MARKERS.iter().any(|m| lowered.contains(m)) {
+        } else if let Some(rule) = self.match_rule(&lowered, est_tokens) {
+            // Règles utilisateur : premier match gagne.
+            let target = match rule.target_tier.as_str() {
+                "expert" => RouteTarget::Expert,
+                _ => RouteTarget::Flash,
+            };
+            Some((target, RouteReason::Rule { name: rule.name.clone() }))
+        } else if CODE_MARKERS.iter().any(|m| lowered.contains(m))
+            || CODE_WORDS.iter().any(|m| has_word(&lowered, m))
+            || (LANGUAGES.iter().any(|m| has_word(&lowered, m))
+                && CODE_CONTEXT.iter().any(|m| lowered.contains(m)))
+        {
             Some((RouteTarget::Expert, RouteReason::CodeDetected))
+        } else if EXPERT_DOMAIN_MARKERS
+            .iter()
+            .any(|m| has_word_start(&lowered, m))
+        {
+            Some((RouteTarget::Expert, RouteReason::DomainDetected))
         } else if is_short_simple(&lowered) {
             Some((RouteTarget::Flash, RouteReason::ShortPrompt))
         } else {
@@ -213,13 +427,13 @@ impl Router {
 
         let (mut target, reason) = match decision {
             Some((target, reason)) => (target, reason),
-            // Stage 2 — centroïdes cosinus.
+            // Stage 2 — centroïdes cosinus, marge ajustée par policy.mode.
             None => {
                 let v = weighted_vector(&lowered, &self.idf);
                 let expert_score = cosine(&v, &self.expert_centroid);
                 let flash_score = cosine(&v, &self.flash_centroid);
                 (
-                    if expert_score > flash_score {
+                    if expert_score - self.semantic_margin > flash_score {
                         RouteTarget::Expert
                     } else {
                         RouteTarget::Flash
@@ -237,7 +451,7 @@ impl Router {
         if target == RouteTarget::Expert
             && let Some(available) = ctx.available_ram_mb
         {
-            let needed = ctx.expert_size_mb.saturating_add(RAM_SAFETY_BUFFER_MB);
+            let needed = ctx.expert_size_mb.saturating_add(self.ram_buffer_mb);
             if available < needed {
                 target = RouteTarget::Flash;
                 return RouteDecision {
@@ -257,6 +471,26 @@ impl Router {
             elapsed: started.elapsed(),
         }
     }
+
+    /// Première règle `[[rules]]` dont toutes les conditions remplies
+    /// matchent. Une règle sans aucune condition est ignorée (piège de
+    /// config qui court-circuiterait tout le trafic).
+    fn match_rule<'r>(&'r self, lowered: &str, est_tokens: usize) -> Option<&'r RouteRule> {
+        self.rules.iter().find(|rule| {
+            if rule.match_keywords.is_empty() && rule.max_input_tokens.is_none() {
+                return false;
+            }
+            let kw_ok = rule.match_keywords.is_empty()
+                || rule
+                    .match_keywords
+                    .iter()
+                    .any(|k| lowered.contains(&k.to_lowercase()));
+            let tok_ok = rule
+                .max_input_tokens
+                .is_none_or(|n| est_tokens <= n);
+            kw_ok && tok_ok
+        })
+    }
 }
 
 impl Default for Router {
@@ -271,6 +505,29 @@ fn is_short_simple(lowered: &str) -> bool {
     // Estimation tokens ≈ chars/4 (BPE ~3,5-4 chars/token en moyenne).
     let est_tokens = lowered.len() / 4;
     est_tokens < 25 && !REASONING_MARKERS.iter().any(|m| lowered.contains(m))
+}
+
+/// Mot-clé présent avec frontières non-alphanumériques **des deux côtés**
+/// (« rust » dans « rustacean » non, dans « (rust) » oui).
+fn has_word(text: &str, needle: &str) -> bool {
+    text.match_indices(needle).any(|(i, _)| {
+        let before = text[..i].chars().next_back();
+        let after = text[i + needle.len()..].chars().next();
+        before.is_none_or(|c| !c.is_alphanumeric())
+            && after.is_none_or(|c| !c.is_alphanumeric())
+    })
+}
+
+/// Mot-clé avec frontière non-alphanumérique **au début seulement** :
+/// « postgres » matche « postgresql » mais pas « impostor ».
+fn has_word_start(text: &str, needle: &str) -> bool {
+    let needle = needle.trim();
+    text.match_indices(needle).any(|(i, _)| {
+        text[..i]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !c.is_alphanumeric())
+    })
 }
 
 /// `@flash` doit matcher comme token entier, pas dans `@flashcards`.
@@ -433,6 +690,42 @@ mod tests {
                         suggest some easy hiking trails and a cozy mountain cabin to stay in?";
         assert_eq!(r.route(expertish, &ctx()).target, RouteTarget::Expert);
         assert_eq!(r.route(flashish, &ctx()).target, RouteTarget::Flash);
+    }
+
+    #[test]
+    fn routing_toml_rules_apply_before_classifier() {
+        let config = RouteConfig {
+            policy: None,
+            rules: vec![
+                RouteRule {
+                    name: "legal-review".to_owned(),
+                    match_keywords: vec!["contract".to_owned()],
+                    max_input_tokens: None,
+                    target_tier: "expert".to_owned(),
+                },
+                RouteRule {
+                    name: "tiny-questions".to_owned(),
+                    match_keywords: vec![],
+                    max_input_tokens: Some(10),
+                    target_tier: "flash".to_owned(),
+                },
+            ],
+        };
+        let r = Router::with_config(config);
+        // "contract" déclenche la règle expert même si le classifieur
+        // sémantique aurait peut-être choisi Flash.
+        let d = r.route(
+            "please review this contract clause and its implications in detail",
+            &ctx(),
+        );
+        assert_eq!(d.target, RouteTarget::Expert);
+        assert!(matches!(d.reason, RouteReason::Rule { ref name } if name == "legal-review"));
+        // max_input_tokens=10 → flash pour une question minuscule.
+        let d = r.route("hey there", &ctx());
+        assert!(matches!(d.reason, RouteReason::Rule { ref name } if name == "tiny-questions"));
+        // Override @expert bat les règles.
+        let d = r.route("@flash contract review", &ctx());
+        assert_eq!(d.target, RouteTarget::Flash);
     }
 
     #[test]
