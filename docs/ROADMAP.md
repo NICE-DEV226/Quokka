@@ -20,6 +20,7 @@ the ecosystem survey (Nov 2026), and the verification gate closing each phase.
 | Server / Web UI | ✅ Done | OpenAI JSON+SSE, `auto` model, embedded Svelte UI |
 | KV-cache LZ4 offload | ✅ Done | `state_save_file`/`state_load_file` + LZ4, session_key = 1er msg user, LRU 8/model, `~/.quokka/cache/kv` — vérifié live : retour conversation → `cached_tokens` = prompt+généré restaurés |
 | MCP / Telemetry | ✅ Done | `quokka mcp` stdio (rmcp 3.11) + `POST /v1/route` + `GET /telemetry` (quokka-telemetry: tokens, cache_hit_ratio, histogrammes routage) — vérifiés live |
+| Releases | ✅ Done | `release.yml` : 5 legs validés en CI (linux cpu/vulkan/cuda, windows cpu, macos-arm64 metal) — cuda en container nvidia/cuda, artifacts tar.gz/zip, GitHub Release sur tag `v*`. Limite : leg cuda = 673 Mo (fatbins), windows-cuda non buildé |
 
 ### Known gaps to close inside Phase 2 prep
 
