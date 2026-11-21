@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 quokka-core = { workspace = true }
 quokka-router = { workspace = true }
+quokka-telemetry = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

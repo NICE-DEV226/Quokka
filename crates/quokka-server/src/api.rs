@@ -82,6 +82,14 @@ pub struct AppState {
     /// Taille de l'expert en Mio pour la garde mémoire du routeur.
     expert_size_mb: u32,
     next_id: Arc<AtomicU64>,
+    /// Compteurs d'usage agrégés, exposés par `GET /telemetry`.
+    telemetry: Arc<quokka_telemetry::Telemetry>,
+}
+
+/// `GET /telemetry` — compteurs d'usage agrégés (tokens, cache KV,
+/// histogramme de routage) depuis le démarrage du processus.
+async fn telemetry(State(state): State<AppState>) -> Json<quokka_telemetry::TelemetrySnapshot> {
+    Json(state.telemetry.snapshot())
 }
 
 /// `POST /v1/route` — dry-run du routeur : même body que
@@ -141,7 +149,14 @@ impl AppState {
             )),
             expert_size_mb,
             next_id: Arc::new(AtomicU64::new(1)),
+            telemetry: Arc::new(quokka_telemetry::Telemetry::new()),
         }
+    }
+
+    /// Registre de télémétrie partagé (aussi accessible aux tests).
+    #[must_use]
+    pub fn telemetry(&self) -> Arc<quokka_telemetry::Telemetry> {
+        Arc::clone(&self.telemetry)
     }
 
     fn completion_id(&self) -> String {
@@ -169,6 +184,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/models", get(models))
         .route("/v1/chat/completions", post(chat_completions))
         .route("/v1/route", post(route_dry_run))
+        .route("/telemetry", get(telemetry))
         .route("/{*path}", get(crate::static_files::asset))
         .with_state(state)
 }
@@ -388,6 +404,14 @@ async fn json_response(
                 cached_prompt_tokens = c;
                 generated_tokens = g;
                 elapsed = e;
+                state.telemetry.record_completion(
+                    &model_id,
+                    &route.reason,
+                    p as u64,
+                    c as u64,
+                    g as u64,
+                    e.as_secs_f64() * 1e3,
+                );
             }
             EngineEvent::Error(message) => {
                 return error_response(StatusCode::INTERNAL_SERVER_ERROR, &message);
@@ -438,6 +462,10 @@ async fn sse_response(
     let id = state.completion_id();
     let created = state.unix_now();
     let mut role_sent = false;
+    // Le stream est 'static : la raison de routage est clonée pour la
+    // télémétrie enregistrée à la fin de la génération.
+    let route_reason = route.reason.clone();
+    let telemetry = Arc::clone(&state.telemetry);
 
     let events = ReceiverStream::new(events_rx).flat_map(move |event| {
         let mut out: Vec<Event> = Vec::with_capacity(2);
@@ -450,7 +478,21 @@ async fn sse_response(
                 role_sent = true;
                 out.push(chunk_event(&id, created, &model_id, Some(delta), None));
             }
-            EngineEvent::Done { finish, .. } => {
+            EngineEvent::Done {
+                finish,
+                prompt_tokens,
+                cached_prompt_tokens,
+                generated_tokens,
+                elapsed,
+            } => {
+                telemetry.record_completion(
+                    &model_id,
+                    &route_reason,
+                    prompt_tokens as u64,
+                    cached_prompt_tokens as u64,
+                    generated_tokens as u64,
+                    elapsed.as_secs_f64() * 1e3,
+                );
                 out.push(chunk_event(
                     &id,
                     created,
