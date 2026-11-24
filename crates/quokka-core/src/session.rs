@@ -85,6 +85,9 @@ pub struct GenerationConfig {
     pub top_k: i32,
     /// Graine du sampler `dist`.
     pub seed: u32,
+    /// Speculative decoding par n-grammes (self-speculative, sans modèle
+    /// draft). Exact en greedy (`temperature == 0`) ; ignoré sinon.
+    pub speculative: bool,
 }
 
 impl Default for GenerationConfig {
@@ -95,6 +98,7 @@ impl Default for GenerationConfig {
             top_p: 0.95,
             top_k: 40,
             seed: 0x5EED,
+            speculative: true,
         }
     }
 }
@@ -278,11 +282,32 @@ impl<'a> InferenceSession<'a> {
         let mut generated = 0_u32;
         let mut finish = FinishReason::Length;
         let mut generated_ids = Vec::with_capacity(config.max_tokens as usize);
+        // Historique complet de la séquence courante (prompt + généré) —
+        // base du matching n-grammes pour la spéculation.
+        let mut seq_hist = tokens.clone();
+        let vocab = self.model.vocab();
+        // Speculative n-gram : exact en greedy, auto-désactivé si le taux
+        // d'acceptation reste trop bas (drafts gaspillés).
+        let mut spec_off = !config.speculative || config.temperature != 0.0;
+        let mut spec_attempts = 0_u32;
+        let mut spec_accepted = 0_u32;
 
         let mut emit_piece = |piece: &str| {
             text.push_str(piece);
             emit(piece);
         };
+        // Macro plutôt que closure : une closure retiendrait des &mut sur
+        // `generated`/`seq_hist` et interdirait leur lecture dans la boucle.
+        macro_rules! push_gen {
+            ($token:expr) => {{
+                let token = $token;
+                let piece = vocab.token_to_piece(token, false, None);
+                out.push(&piece, &mut emit_piece);
+                generated += 1;
+                generated_ids.push(token);
+                seq_hist.push(token);
+            }};
+        }
 
         loop {
             if generated >= config.max_tokens {
@@ -294,23 +319,106 @@ impl<'a> InferenceSession<'a> {
             }
 
             let token = sampler.sample(&self.ctx, -1);
-            if self.model.vocab().is_eog(token) {
+            if vocab.is_eog(token) {
                 finish = FinishReason::Stop;
                 break;
             }
 
-            let piece = self.model.vocab().token_to_piece(token, false, None);
-            out.push(&piece, &mut emit_piece);
-            generated += 1;
-            generated_ids.push(token);
-
-            batch.clear();
-            batch
-                .add(token, pos, &[0], true)
-                .map_err(|err| CoreError::Inference(format!("batch add: {err}")))?;
-            self.decode(&mut batch)?;
+            push_gen!(token);
             sampler.accept(token);
-            pos += 1;
+
+            // --- Tour spéculatif : draft n-grammes + vérif en un batch ---
+            let mut spec_done = false;
+            if !spec_off {
+                // Bornes : place dans le contexte (batch + correction/bonus)
+                // et tokens encore émettables (correction/bonus en plus).
+                let room_ctx = self.n_ctx as i32 - pos - 2;
+                let room_gen = config.max_tokens.saturating_sub(generated);
+                let kmax = SPEC_DRAFT_MAX
+                    .min(room_ctx.max(0) as usize)
+                    .min(room_gen.saturating_sub(1) as usize)
+                    .min(self.n_batch.saturating_sub(1) as usize);
+                if kmax > 0 {
+                    let drafts = ngram_draft(&seq_hist, SPEC_NGRAM, kmax);
+                    if !drafts.is_empty() {
+                        spec_attempts += drafts.len() as u32;
+                        match self.spec_verify(&mut batch, &mut sampler, token, &drafts, pos)? {
+                            SpecOutcome::Reject {
+                                accepted,
+                                correction,
+                            } => {
+                                for &d in &drafts[..accepted] {
+                                    push_gen!(d);
+                                    sampler.accept(d);
+                                }
+                                spec_accepted += accepted as u32;
+                                // On garde t0 + `accepted` drafts dans le KV,
+                                // on purge la queue rejetée du batch.
+                                let keep = pos + 1 + accepted as i32;
+                                let purge_end = pos + 1 + drafts.len() as i32;
+                                self.ctx
+                                    .kv_cache_seq_rm(0, Some(keep as u32), Some(purge_end as u32))
+                                    .map_err(|err| {
+                                        CoreError::Inference(format!("spec kv rollback: {err}"))
+                                    })?;
+                                if vocab.is_eog(correction) {
+                                    finish = FinishReason::Stop;
+                                    pos = keep;
+                                } else {
+                                    batch.clear();
+                                    batch.add(correction, keep, &[0], true).map_err(|err| {
+                                        CoreError::Inference(format!(
+                                            "spec correction batch: {err}"
+                                        ))
+                                    })?;
+                                    self.decode(&mut batch)?;
+                                    sampler.accept(correction);
+                                    push_gen!(correction);
+                                    pos = keep + 1;
+                                }
+                                spec_done = true;
+                            }
+                            SpecOutcome::AllAccepted { bonus } => {
+                                for &d in &drafts {
+                                    push_gen!(d);
+                                    sampler.accept(d);
+                                }
+                                spec_accepted += drafts.len() as u32;
+                                if vocab.is_eog(bonus) {
+                                    finish = FinishReason::Stop;
+                                    pos += 1 + drafts.len() as i32;
+                                } else {
+                                    let bpos = pos + 1 + drafts.len() as i32;
+                                    batch.clear();
+                                    batch.add(bonus, bpos, &[0], true).map_err(|err| {
+                                        CoreError::Inference(format!("spec bonus batch: {err}"))
+                                    })?;
+                                    self.decode(&mut batch)?;
+                                    sampler.accept(bonus);
+                                    push_gen!(bonus);
+                                    pos = bpos + 1;
+                                }
+                                spec_done = true;
+                            }
+                        }
+                    }
+                }
+                // Adaptatif : <25 % d'acceptation sur 16+ drafts → off.
+                if spec_attempts >= 16 && spec_accepted.saturating_mul(4) < spec_attempts {
+                    spec_off = true;
+                }
+            }
+            if finish == FinishReason::Stop {
+                break;
+            }
+            if !spec_done {
+                batch.clear();
+                batch
+                    .add(token, pos, &[0], true)
+                    .map_err(|err| CoreError::Inference(format!("batch add: {err}")))?;
+                self.decode(&mut batch)?;
+                pos += 1;
+            }
         }
 
         out.finish(&mut emit_piece);
@@ -508,6 +616,47 @@ impl<'a> InferenceSession<'a> {
             .map_err(|err| CoreError::Inference(format!("decode: {err}")))
     }
 
+    /// Décode `t0` suivi des `drafts` en un seul batch (logits demandés à
+    /// chaque position) et fait tirer au sampler la prédiction de chaque
+    /// ligne : premier écart → [`SpecOutcome::Reject`] avec le token
+    /// corrigé ; tous acceptés → [`SpecOutcome::AllAccepted`] avec le
+    /// bonus. Passer par `sampler.sample` (et non l'argmax brut) est
+    /// requis : top-k/top-p filtrent les logits avant le greedy.
+    ///
+    /// Le KV-cache contient alors `t0` + tous les drafts ; l'appelant
+    /// purge la queue rejetée via `kv_cache_seq_rm` si besoin.
+    fn spec_verify(
+        &mut self,
+        batch: &mut LlamaBatch<'_>,
+        sampler: &mut LlamaSampler,
+        t0: LlamaToken,
+        drafts: &[LlamaToken],
+        pos: i32,
+    ) -> Result<SpecOutcome> {
+        batch.clear();
+        batch
+            .add(t0, pos, &[0], true)
+            .map_err(|err| CoreError::Inference(format!("spec batch: {err}")))?;
+        for (i, &d) in drafts.iter().enumerate() {
+            batch
+                .add(d, pos + 1 + i as i32, &[0], true)
+                .map_err(|err| CoreError::Inference(format!("spec batch: {err}")))?;
+        }
+        self.decode(batch)?;
+        for (i, &d) in drafts.iter().enumerate() {
+            let pred = sampler.sample(&self.ctx, i as i32);
+            if pred != d {
+                return Ok(SpecOutcome::Reject {
+                    accepted: i,
+                    correction: pred,
+                });
+            }
+        }
+        Ok(SpecOutcome::AllAccepted {
+            bonus: sampler.sample(&self.ctx, drafts.len() as i32),
+        })
+    }
+
     fn build_sampler(&self, config: &GenerationConfig) -> LlamaSampler {
         let mut samplers = Vec::with_capacity(4);
         if config.top_k > 0 {
@@ -516,10 +665,50 @@ impl<'a> InferenceSession<'a> {
         samplers.push(LlamaSampler::top_p(config.top_p, 1));
         if config.temperature > 0.0 {
             samplers.push(LlamaSampler::temp(config.temperature));
+            samplers.push(LlamaSampler::dist(config.seed));
+        } else {
+            // temp=0 = greedy déterministe (sémantique OpenAI) — sans ça,
+            // `dist` échantillonnerait aléatoirement et le speculative
+            // decoding ne pourrait pas être exact.
+            samplers.push(LlamaSampler::greedy());
         }
-        samplers.push(LlamaSampler::dist(config.seed));
         LlamaSampler::chain_simple(samplers)
     }
+}
+
+/// Verdict d'un tour de speculative decoding.
+enum SpecOutcome {
+    /// `accepted` drafts validés, rejet au rang `accepted` — `correction`
+    /// est le token que le target aurait produit à cette position.
+    Reject {
+        accepted: usize,
+        correction: LlamaToken,
+    },
+    /// Tous les drafts acceptés — `bonus` est le token suivant gratuit.
+    AllAccepted { bonus: LlamaToken },
+}
+
+/// Taille de l'n-gramme cherché dans l'historique pour proposer des drafts.
+const SPEC_NGRAM: usize = 3;
+/// Nombre max de tokens draftés par tour spéculatif.
+const SPEC_DRAFT_MAX: usize = 4;
+
+/// Propose jusqu'à `k` tokens en cherchant la plus récente occurrence de
+/// l'n-gramme terminal de `hist` plus tôt dans l'historique, puis en
+/// copiant ce qui la suivait (prompt-lookup decoding, sans modèle draft).
+fn ngram_draft(hist: &[LlamaToken], n: usize, k: usize) -> Vec<LlamaToken> {
+    let len = hist.len();
+    if len < 2 * n || k == 0 {
+        return Vec::new();
+    }
+    let tail = &hist[len - n..];
+    for start in (0..=len - 2 * n).rev() {
+        if &hist[start..start + n] == tail {
+            let end = (start + n + k).min(len);
+            return hist[start + n..end].to_vec();
+        }
+    }
+    Vec::new()
 }
 
 /// Accumulate les octets des pièces de tokens et n'émet que des préfixes
@@ -691,5 +880,45 @@ mod tests {
         assert!(config.max_tokens > 0);
         assert!(config.temperature > 0.0 && config.temperature <= 2.0);
         assert!(config.top_p > 0.0 && config.top_p <= 1.0);
+        assert!(config.speculative);
+    }
+
+    fn toks(ids: &[i32]) -> Vec<LlamaToken> {
+        ids.iter().copied().map(LlamaToken).collect()
+    }
+
+    #[test]
+    fn ngram_draft_finds_prior_occurrence() {
+        // "a b c" apparaît deux fois : le draft doit copier ce qui suivait
+        // la première occurrence.
+        let hist = toks(&[1, 2, 3, 9, 9, 1, 2, 3]);
+        // queue = [1,2,3] (n=3) ; occurrence à start=0 suivie de [9,9,...]
+        let d = ngram_draft(&hist, 3, 4);
+        assert_eq!(d, toks(&[9, 9, 1, 2]));
+    }
+
+    #[test]
+    fn ngram_draft_prefers_most_recent_match() {
+        // queue = [1,2,3] ; occurrences à start=0 (suivie de 8) et
+        // start=4 (suivie de 9) → la plus récente gagne.
+        let hist = toks(&[1, 2, 3, 8, 1, 2, 3, 9, 1, 2, 3]);
+        let d = ngram_draft(&hist, 3, 4);
+        assert_eq!(d, toks(&[9, 1, 2, 3]));
+    }
+
+    #[test]
+    fn ngram_draft_empty_without_match_or_history() {
+        assert!(ngram_draft(&toks(&[1, 2, 3, 4, 5, 6]), 3, 4).is_empty());
+        assert!(ngram_draft(&toks(&[1, 2, 3]), 3, 4).is_empty());
+        assert!(ngram_draft(&toks(&[1, 2, 3, 1, 2, 3]), 3, 0).is_empty());
+    }
+
+    #[test]
+    fn ngram_draft_copies_periodic_continuation() {
+        // motif périodique [1,2,3] : l'occurrence en start=0 est suivie du
+        // même motif → le draft propose la répétition.
+        let hist = toks(&[1, 2, 3, 1, 2, 3]);
+        let d = ngram_draft(&hist, 3, 4);
+        assert_eq!(d, toks(&[1, 2, 3]));
     }
 }

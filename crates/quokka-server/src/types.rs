@@ -30,6 +30,10 @@ pub struct ChatCompletionRequest {
     pub top_k: Option<i32>,
     #[serde(default)]
     pub seed: Option<u32>,
+    /// Speculative decoding par n-grammes. Défaut `true` ; sans effet
+    /// hors greedy (`temperature == 0`). Champ non-standard OpenAI.
+    #[serde(default)]
+    pub speculative: Option<bool>,
 }
 
 /// Message au format OpenAI. `content` est une string simple — les
@@ -95,6 +99,9 @@ impl ChatCompletionRequest {
         }
         if let Some(v) = self.seed {
             config.seed = v;
+        }
+        if let Some(v) = self.speculative {
+            config.speculative = v;
         }
         config
     }

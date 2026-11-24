@@ -566,6 +566,7 @@ mod tests {
             top_p: None,
             top_k: None,
             seed: None,
+            speculative: None,
         };
         let served = [("flash", "a.gguf"), ("expert", "b.gguf")];
         assert_eq!(req.resolve_role(&served), Some(ModelRole::Flash));
@@ -582,6 +583,7 @@ mod tests {
             top_p: None,
             top_k: None,
             seed: Some(1),
+            speculative: None,
         };
         let served = [("flash", "a.gguf"), ("expert", "b.gguf")];
         assert_eq!(req.resolve_role(&served), Some(ModelRole::Expert));
@@ -602,6 +604,7 @@ mod tests {
             top_p: None,
             top_k: None,
             seed: None,
+            speculative: None,
         };
         let served = [("flash", "a.gguf")];
         assert_eq!(req.resolve_role(&served), None);
