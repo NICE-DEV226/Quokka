@@ -44,6 +44,18 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install CMake (Windows)
+        # windows-latest embarque un cmake dont les modules 4.4/4.5 sont
+        # mélangés → configure_file échoue dans llama-cpp-sys. Version
+        # épinglée et isolée via GITHUB_PATH.
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ver = "3.31.8"
+          curl.exe -L "https://github.com/Kitware/CMake/releases/download/v$ver/cmake-$ver-windows-x86_64.zip" -o cmake.zip
+          Expand-Archive cmake.zip -DestinationPath "$env:RUNNER_TEMP\cmake" -Force
+          Add-Content $env:GITHUB_PATH "$env:RUNNER_TEMP\cmake\cmake-$ver-windows-x86_64\bin"
+
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
 
