@@ -70,7 +70,11 @@ jobs:
         shell: bash
         env:
           CMAKE_GENERATOR: Visual Studio 17 2022
-        run: cargo check --workspace --all-targets --locked
+        run: |
+          # Le cache rust conserve le CMakeCache.txt du run précédent
+          # (configuré avec un autre générateur) → purge ciblée.
+          rm -rf target/debug/build/llama-cpp-sys-2*
+          cargo check --workspace --all-targets --locked
 
   deny:
     name: cargo-deny (licenses · advisories · bans)

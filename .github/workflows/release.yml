@@ -95,6 +95,8 @@ jobs:
           # VS 2026 sur windows-latest → forcer un générateur connu de cmake.
           if [ "$RUNNER_OS" = "Windows" ]; then
             export CMAKE_GENERATOR="Visual Studio 17 2022"
+            # Le cache rust conserve l'ancien CMakeCache.txt → purge.
+            rm -rf target/release/build/llama-cpp-sys-2*
           fi
           cargo build "${args[@]}"
 
