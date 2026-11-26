@@ -75,12 +75,12 @@ jobs:
         run: command -v cmake >/dev/null || brew install cmake
 
       - name: Install CMake (Windows)
-        # windows-latest embarque un cmake dont les modules 4.4/4.5 sont
-        # mélangés → configure_file échoue dans llama-cpp-sys.
+        # cmake préinstallé mélangé (modules 4.4/4.5) + VS 2022 retiré de
+        # l'image → cmake ≥4.2 cohérent depuis le zip officiel.
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $ver = "3.31.8"
+          $ver = "4.3.2"
           curl.exe -L "https://github.com/Kitware/CMake/releases/download/v$ver/cmake-$ver-windows-x86_64.zip" -o cmake.zip
           Expand-Archive cmake.zip -DestinationPath "$env:RUNNER_TEMP\cmake" -Force
           Add-Content $env:GITHUB_PATH "$env:RUNNER_TEMP\cmake\cmake-$ver-windows-x86_64\bin"
@@ -92,10 +92,9 @@ jobs:
           if [ -n "${{ matrix.features }}" ]; then
             args+=(--features "${{ matrix.features }}")
           fi
-          # VS 2026 sur windows-latest → forcer un générateur connu de cmake.
           if [ "$RUNNER_OS" = "Windows" ]; then
-            export CMAKE_GENERATOR="Visual Studio 17 2022"
-            # Le cache rust conserve l'ancien CMakeCache.txt → purge.
+            # Le cache rust conserve l'ancien CMakeCache.txt (autre
+            # générateur/toolchain) → purge pour repartir propre.
             rm -rf target/release/build/llama-cpp-sys-2*
           fi
           cargo build "${args[@]}"

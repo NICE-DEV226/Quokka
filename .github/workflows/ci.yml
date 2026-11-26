@@ -45,13 +45,13 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install CMake (Windows)
-        # windows-latest embarque un cmake dont les modules 4.4/4.5 sont
-        # mélangés → configure_file échoue dans llama-cpp-sys. Version
-        # épinglée et isolée via GITHUB_PATH.
+        # Le cmake préinstallé du runner mélange ses modules 4.4/4.5 et
+        # VS 2022 a disparu de l'image (VS 2026 seulement) : il faut un
+        # cmake ≥4.2 cohérent, installé depuis le zip officiel.
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $ver = "3.31.8"
+          $ver = "4.3.2"
           curl.exe -L "https://github.com/Kitware/CMake/releases/download/v$ver/cmake-$ver-windows-x86_64.zip" -o cmake.zip
           Expand-Archive cmake.zip -DestinationPath "$env:RUNNER_TEMP\cmake" -Force
           Add-Content $env:GITHUB_PATH "$env:RUNNER_TEMP\cmake\cmake-$ver-windows-x86_64\bin"
@@ -64,15 +64,12 @@ jobs:
         run: cargo check --workspace --all-targets --locked
 
       - name: Check all targets (Windows)
-        # Le runner expose VS 2026 : le crate cmake choisirait le
-        # générateur "Visual Studio 18 2026" que cmake 3.31 ne connaît pas.
         if: runner.os == 'Windows'
         shell: bash
-        env:
-          CMAKE_GENERATOR: Visual Studio 17 2022
         run: |
           # Le cache rust conserve le CMakeCache.txt du run précédent
-          # (configuré avec un autre générateur) → purge ciblée.
+          # (configuré avec un autre générateur/toolchain) → purge ciblée
+          # pour immuniser contre la dérive de l'image runner.
           rm -rf target/debug/build/llama-cpp-sys-2*
           cargo check --workspace --all-targets --locked
 
