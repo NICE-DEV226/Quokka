@@ -92,6 +92,10 @@ jobs:
           if [ -n "${{ matrix.features }}" ]; then
             args+=(--features "${{ matrix.features }}")
           fi
+          # VS 2026 sur windows-latest → forcer un générateur connu de cmake.
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            export CMAKE_GENERATOR="Visual Studio 17 2022"
+          fi
           cargo build "${args[@]}"
 
       - name: Package binary (unix)
