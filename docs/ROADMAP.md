@@ -15,7 +15,7 @@ the ecosystem survey (Nov 2026), and the verification gate closing each phase.
 | `quokka-hardware` | ✅ Done | RAM (`MemAvailable`), CPU topology, SIMD runtime-detect, GPU probe CUDA→Metal→Vulkan→none, tier matrix, GGUF discovery (5 stores), HF downloader (ranged parallel + sha256 + resume) |
 | Registry | ✅ Done | `profiles.json` embedded + `~/.quokka/profiles.json` override |
 | CLI | ✅ Done | `hardware`, `pull`, `run`, `status`, `bench` live |
-| Inference (`quokka-core`) | ✅ Done | `llama-cpp-2` pinned, mmap load, persistent `InferenceSession` per worker, KV prefix reuse (`cached_tokens` in usage), Q8 KV + flash attention, `GGML_CPU_REPACK=OFF` |
+| Inference (`quokka-core`) | ✅ Done | `llama-cpp-2` pinned, mmap load, persistent `InferenceSession` per worker, KV prefix reuse (`cached_tokens` in usage), Q8 KV + flash attention, `GGML_CPU_REPACK=OFF`, **speculative n-gram greedy** (`809e52d` : draft par matching 3-grammes, verify batché, rollback `seq_rm`, auto-disable <25 %, exact vérifié live — `temperature=0` est désormais greedy réel) |
 | Router (`quokka-router`) | ✅ Done | Stage 1 lexical + domain markers, `routing.toml` rules/`[policy]`, Stage 2 centroid-IDF classifier (ADR-0004, ONNX deferred), memory guard, `model=auto` + `X-Quokka-*` headers, corpus 137 prompts @ 100 %, criterion bench ~0,3–5,5 µs |
 | Server / Web UI | ✅ Done | OpenAI JSON+SSE, `auto` model, embedded Svelte UI |
 | KV-cache LZ4 offload | ✅ Done | `state_save_file`/`state_load_file` + LZ4, session_key = 1er msg user, LRU 8/model, `~/.quokka/cache/kv` — vérifié live : retour conversation → `cached_tokens` = prompt+généré restaurés |
@@ -151,7 +151,8 @@ runtime changes).
   FNV-1a du 1er message user, préfixe-token vérifié à la restauration,
   LRU 8 fichiers/modèle. Restauré état inclut les tokens générés.
 
-*Last updated: 2026-11-20, after Phase 3 router completion (`b09d97c`).*
+*Last updated: 2026-11-26, after speculative n-gram decoding (`809e52d`)
+and CI repair (ui/dist stub, url 2.5.9, Windows CMake pin).*
 
 ## 4. Phase 4 — MCP, Web UI, release engineering
 

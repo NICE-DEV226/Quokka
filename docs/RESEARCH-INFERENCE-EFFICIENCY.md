@@ -268,7 +268,7 @@ scope. À documenter comme non-objectif.
 
 | # | Action | Gain estimé | Effort | Statut |
 |---|---|---|---|---|
-| P0 | **Vérifier l'accès au speculative decoding** dans llama-cpp-2 (draft-simple / MTP / ngram) | 1.5-3× decode | M | à investiguer |
+| P0 | **Vérifier l'accès au speculative decoding** dans llama-cpp-2 (draft-simple / MTP / ngram) | 1.5-3× decode | M | **fait** — self-spec n-gram en Rust pur (`809e52d`), greedy-only, exact vérifié live ; draft-model et MTP restent à faire (wrapper C++ non exposé / nécessite patch sys) |
 | P0 | **Paire même-famille** Flash/Expert (ex. Qwen2.5-Coder-1.5B→7B) pour débloquer draft→verify | 2-3× sur Expert | S (config) | décision produit |
 | P1 | **Multi-slots KV par rôle** (équivalent -np/-kvu) | concurrency réelle | M | roadmap |
 | P1 | **Cache réponses exact-match** (hash prompt normalisé) | -coût sur requêtes répétées | S | facile |
@@ -277,7 +277,7 @@ scope. À documenter comme non-objectif.
 | P2 | Expert **MTP-compatible** (Qwen3.6) à la prochaine itération modèles | ~2× gratuit | S | attendre modèle |
 | P2 | Cache sémantique (embedder léger) | -50-80 % sur requêtes paraphrasées | M-L | phase ultérieure |
 | P3 | `EcoMode` : routing plus agressif vers Flash (énergie) | -2-4× énergie/requête | S | routing.toml existe |
-| P3 | N-gram/self-speculative pour code & édition | 1.5-2× sur workloads input-grounded | M | suit P0 |
+| P3 | N-gram/self-speculative pour code & édition | 1.5-2× sur workloads input-grounded | M | **fait** (`809e52d`) — n=3, ≤4 drafts, verify batché + rollback `seq_rm`, auto-disable <25 % acceptance ; mesuré -22 % sur prompt répétitif, neutre sinon |
 
 ## 4. Explicitement rejeté
 
