@@ -185,6 +185,16 @@ and CI repair (ui/dist stub, url 2.5.9, Windows CMake pin).*
 - **Docs**: every phase ends with this file updated (status column) and,
   for structural changes, a new ADR.
 
+## 5b. Future direction — distributed speculative mesh
+
+`docs/RFC-001_Quokka_Speculative_Mesh.md` proposes pipeline-parallel
+inference across LAN nodes amortized by speculative drafting. Direction
+validated, but two caveats recorded in review: stochastic verification
+requires full-vocab distributions (top-64 logits break exactness — prefer
+greedy-only), and GGUF layer-sharding in ggml has no existing API and is
+the dominant risk (evaluate exo/exolabs before building `quokka-mesh`).
+Blocked on a same-family draft→target model pair.
+
 ## 6. Risk register
 
 | Risk | Likelihood | Impact | Mitigation |
